@@ -1,4 +1,4 @@
-package handler
+package tests
 
 import (
 	"crypto/hmac"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"W-dev/internal/handler"
 	"W-dev/internal/middleware"
 	"W-dev/internal/service"
 	"W-dev/pkg/util"
@@ -22,7 +23,7 @@ func sign(secret string, body string) string {
 
 func TestWebhookRejectsBadSignatureAndAcceptsPing(t *testing.T) {
 	gh := service.NewGitHubService("id", "sec", "whsec", "https://x")
-	h := NewWebhookHandler(gh, nil, nil)
+	h := handler.NewWebhookHandler(gh, nil, nil)
 	body := `{"zen":"hi"}`
 
 	// tanpa signature
