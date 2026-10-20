@@ -1,0 +1,85 @@
+# Jalankan dari root repo:
+#   docker compose -f deployments/docker-compose.yml --env-file .env up -d --build
+services:
+  paas-backend:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: paas-backend
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      WORKSPACE_PATH: /var/lib/paas/workspace
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../data/workspace:/var/lib/paas/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [proxy-net]
+    labels:
+      # API platform: api.<MAIN_DOMAIN> -> backend
+      traefik.enable: "true"
+      traefik.docker.network: proxy-net
+      traefik.http.routers.paas-api.rule: Host(`api.${MAIN_DOMAIN}`)
+      traefik.http.routers.paas-api.entrypoints: web
+      traefik.http.services.paas-api.loadbalancer.server.port: "8080"
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: paas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-paas}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-paas_db}
+    volumes:
+      - paas-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [proxy-net]
+
+  traefik:
+    image: traefik:v3.6
+    container_name: paas-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CF_DNS_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - traefik-acme:/acme
+    networks: [proxy-net]
+
+  # Cloudflare Tunnel: di dashboard Zero Trust, arahkan Public Hostname
+  # `*.${MAIN_DOMAIN}` dan `api.${MAIN_DOMAIN}` ke service http://traefik:80
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: paas-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [traefik]
+    networks: [proxy-net]
+
+volumes:
+  paas-pg-data:
+  traefik-acme:
+
+networks:
+  proxy-net:
+    name: proxy-net
+    driver: bridge
+    attachable: true

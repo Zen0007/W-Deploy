@@ -1,0 +1,21 @@
+# Secrets
+.env
+*.pem
+
+# Build & data
+/bin/
+/tmp/
+data/workspace/*
+!data/workspace/.gitkeep
+web/dist/*
+!web/dist/.gitkeep
+
+# Go
+*.test
+*.out
+coverage.*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
