@@ -6,6 +6,7 @@ require (
 	github.com/cloudflare/cloudflare-go/v7 v7.13.0
 	github.com/coder/websocket v1.8.15
 	github.com/joho/godotenv v1.5.1
+	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
 	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
@@ -28,7 +29,6 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/moby/api v1.56.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect

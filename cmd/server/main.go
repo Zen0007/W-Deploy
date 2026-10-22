@@ -1,6 +1,7 @@
 package main
 
 import (
+	webembed "W-dev"
 	"context"
 	"errors"
 	"log"
@@ -117,7 +118,7 @@ func main() {
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           router.New(cfg, handlers, "web/dist"),
+		Handler:           router.New(webembed.EmbeddedFiles, cfg, handlers, "web/dist"),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// WriteTimeout sengaja tidak diset agar WebSocket & upload besar tidak terputus.

@@ -1,10 +1,13 @@
 package router
 
 import (
+	"bytes"
+	"embed"
+	"io/fs"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"W-dev/internal/config"
 	"W-dev/internal/handler"
@@ -23,7 +26,7 @@ type Handlers struct {
 
 // New membangun http.Handler lengkap dengan middleware. Memakai ServeMux Go 1.22+
 // (pola "METHOD /path/{param}"), jadi tidak butuh framework tambahan.
-func New(cfg *config.Config, h Handlers, staticDir string) http.Handler {
+func New(embeddedFiles embed.FS, cfg *config.Config, h Handlers, staticDir string) http.Handler {
 	mux := http.NewServeMux()
 
 	auth := middleware.RequireAuth(cfg.JWTSecret, false)
@@ -56,27 +59,51 @@ func New(cfg *config.Config, h Handlers, staticDir string) http.Handler {
 
 	mux.Handle("GET /api/ws/apps/{id}", authWS(http.HandlerFunc(h.WS.Serve)))
 
-	// Frontend statis (SPA) bila tersedia
-	if fi, err := os.Stat(filepath.Join(staticDir, "index.html")); err == nil && !fi.IsDir() {
-		mux.Handle("/", spa(staticDir))
-	}
+	// Frontend statis (SPA) – selalu gunakan embed
+	mux.Handle("/", spaEmbedded(embeddedFiles))
 
 	return middleware.CORS(cfg.CORSOrigins)(mux)
 }
 
-// spa menyajikan file statis dan fallback ke index.html untuk rute client-side.
-func spa(dir string) http.Handler {
-	fs := http.FileServer(http.Dir(dir))
+// spaEmbedded menyajikan file statis dari embed.FS dan fallback ke index.html.
+func spaEmbedded(embeddedFiles embed.FS) http.Handler {
+	subFS, err := fs.Sub(embeddedFiles, "web")
+	if err != nil {
+		panic(err)
+	}
+	fileServer := http.FileServer(http.FS(subFS))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			http.NotFound(w, r)
 			return
 		}
-		p := filepath.Join(dir, filepath.Clean("/"+r.URL.Path))
-		if fi, err := os.Stat(p); err != nil || fi.IsDir() {
-			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		p := strings.TrimPrefix(filepath.Clean(r.URL.Path), "/")
+		if p == "" {
+			p = "index.html"
+		}
+		// 1. Baca index.html terlebih dahulu (bisa dilakukan sekali di luar handler atau di dalam handler)
+		indexBytes, err := fs.ReadFile(subFS, "index.html")
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		fs.ServeHTTP(w, r)
+
+		// 2. Di dalam logika fallback / error handling Anda:
+		f, err := subFS.Open(p)
+		if err != nil {
+			// Fallback ke index.html menggunakan bytes.NewReader (implementasi io.ReadSeeker)
+			reader := bytes.NewReader(indexBytes)
+			http.ServeContent(w, r, "index.html", time.Time{}, reader)
+			return
+		}
+		defer f.Close()
+
+		stat, err := f.Stat()
+		if err != nil || stat.IsDir() {
+			reader := bytes.NewReader(indexBytes)
+			http.ServeContent(w, r, "index.html", time.Time{}, reader)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
 	})
 }
