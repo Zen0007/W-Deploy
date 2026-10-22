@@ -1,5 +1,5 @@
 tunnel: b39ca42f-5072-4747-8be4-a676dfe82143
-credentials-file: /root/.cloudflared/<Tunnel-ID-Baru>.json
+credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
   - hostname: "api.wdeploy.my.id"

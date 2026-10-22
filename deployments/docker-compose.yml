@@ -70,10 +70,8 @@ services:
     restart: unless-stopped
     command: tunnel --config /etc/cloudflared/config.yml run
     volumes:
-      # Melampirkan kredensial CLI (.json dan cert.pem) dari host Linux
-      - ~/.cloudflared:/root/.cloudflared:ro
-      # Melampirkan file config.yml yang berisi rute tunnel
-      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro,z
+      - /home/mrizan/.cloudflared/b39ca42f-5072-4747-8be4-a676dfe82143.json:/etc/cloudflared/credentials.json:ro,z
     depends_on: [traefik]
     networks: [proxy-net]
 
