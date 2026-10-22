@@ -1,0 +1,9 @@
+tunnel: b39ca42f-5072-4747-8be4-a676dfe82143
+credentials-file: /root/.cloudflared/<Tunnel-ID-Baru>.json
+
+ingress:
+  - hostname: "api.wdeploy.my.id"
+    service: http://traefik:80
+  - hostname: "*.wdeploy.my.id"
+    service: http://traefik:80
+  - service: http_status:404

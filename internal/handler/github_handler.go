@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"slices"
 	"log"
 	"net/http"
 	"strconv"
@@ -60,10 +61,8 @@ func (h *GitHubHandler) Repos(w http.ResponseWriter, r *http.Request) {
 
 // allow mengembalikan v hanya jika termasuk whitelist (selain itu "").
 func allow(v string, ok ...string) string {
-	for _, o := range ok {
-		if v == o {
+	if slices.Contains(ok, v) {
 			return v
 		}
-	}
 	return ""
 }

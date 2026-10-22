@@ -68,9 +68,12 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: paas-cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      # Melampirkan kredensial CLI (.json dan cert.pem) dari host Linux
+      - ~/.cloudflared:/root/.cloudflared:ro
+      # Melampirkan file config.yml yang berisi rute tunnel
+      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro
     depends_on: [traefik]
     networks: [proxy-net]
 

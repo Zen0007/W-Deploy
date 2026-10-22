@@ -60,9 +60,7 @@ func (s *TunnelService) GetTunnelToken(ctx context.Context, tunnelID string) (st
 	if err != nil {
 		return "", fmt.Errorf("gagal mengambil token untuk tunnel '%s': %w", tunnelID, err)
 	}
-	if err != nil {
-		return "", fmt.Errorf("gagal ambil token tunnel %s: %w", tunnelID, err)
-	}
+
 	return *resp, nil // Di v7, kembaliannya berupa string primitif langsung
 }
 

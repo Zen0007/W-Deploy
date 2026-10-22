@@ -20,14 +20,14 @@ type Config struct {
 	LogLevel string
 
 	// Domain
-	MainDomain string // contoh: domainanda.com
-	ServerIP   string
+	// MainDomain string // contoh: domainanda.com
+	ServerIP string
 
 	// Cloudflare
 	CloudflareAPIToken  string
 	CloudflareAccountID string
 	CloudflareZoneID    string
-	TunnelName          string
+	TunnelID            string
 
 	// Workspace
 	WorkspacePath string // path lokal untuk build & artifact
@@ -42,12 +42,12 @@ type Config struct {
 	DBSSLMode  string
 
 	// GitHub
-	GitHubClientID       string
-	GitHubClientSecret   string
-	GitHubWebhookSecret  string
-	GitHubWebhookBaseURL string // contoh: https://api.domainanda.com
-	GitHubRedirectURL    string // callback OAuth, default: <GITHUB_WEBHOOK_BASE_URL>/api/auth/github/callback
-	FrontendURL          string // tujuan redirect setelah login berhasil, contoh: https://app.domainanda.com
+	// GitHubClientID       string
+	// GitHubClientSecret   string
+	// GitHubWebhookSecret  string
+	// GitHubWebhookBaseURL string // contoh: https://api.domainanda.com
+	GitHubRedirectURL string // callback OAuth, default: <GITHUB_WEBHOOK_BASE_URL>/api/auth/github/callback
+	FrontendURL       string // tujuan redirect setelah login berhasil, contoh: https://app.domainanda.com
 
 	// Security
 	JWTSecret  string // dipakai menandatangani session token & mengenkripsi access token GitHub
@@ -74,13 +74,13 @@ func Load() (*Config, error) {
 		Env:      getEnv("APP_ENV", "development"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 
-		MainDomain: getEnv("MAIN_DOMAIN", "domainanda.com"),
-		ServerIP:   getEnv("SERVER_IP", "127.0.0.1"),
+		// MainDomain: getEnv("MAIN_DOMAIN", "domainanda.com"),
+		ServerIP: getEnv("SERVER_IP", "127.0.0.1"),
 
 		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
 		CloudflareAccountID: getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
 		CloudflareZoneID:    getEnv("CLOUDFLARE_ZONE_ID", ""),
-		TunnelName:          getEnv("CLOUDFLARE_TUNNEL_NAME", "kelas-a-tunnel"),
+		TunnelID:            getEnv("CLOUDFLARE_TUNNEL_ID", ""), // Menggantikan TunnelName
 
 		WorkspacePath: getEnv("WORKSPACE_PATH", "/var/lib/paas/workspace"),
 		DataPath:      getEnv("DATA_PATH", "/var/lib/paas/data"),
@@ -92,10 +92,10 @@ func Load() (*Config, error) {
 		DBName:     getEnv("DB_NAME", "paas_db"),
 		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 
-		GitHubClientID:       getEnv("GITHUB_CLIENT_ID", ""),
-		GitHubClientSecret:   getEnv("GITHUB_CLIENT_SECRET", ""),
-		GitHubWebhookSecret:  getEnv("GITHUB_WEBHOOK_SECRET", ""),
-		GitHubWebhookBaseURL: getEnv("GITHUB_WEBHOOK_BASE_URL", "https://api."+getEnv("MAIN_DOMAIN", "domainanda.com")),
+		// GitHubClientID:       getEnv("GITHUB_CLIENT_ID", ""),
+		// GitHubClientSecret:   getEnv("GITHUB_CLIENT_SECRET", ""),
+		// GitHubWebhookSecret:  getEnv("GITHUB_WEBHOOK_SECRET", ""),
+		// GitHubWebhookBaseURL: getEnv("GITHUB_WEBHOOK_BASE_URL", "https://api."+getEnv("MAIN_DOMAIN", "domainanda.com")),
 
 		FrontendURL: getEnv("FRONTEND_URL", "http://localhost:5173"),
 
@@ -110,7 +110,7 @@ func Load() (*Config, error) {
 		TraefikTLS:          getEnvBool("TRAEFIK_TLS", false),
 		TraefikCertResolver: getEnv("TRAEFIK_CERT_RESOLVER", "cloudflare"),
 	}
-	cfg.GitHubRedirectURL = getEnv("GITHUB_REDIRECT_URL", cfg.GitHubWebhookBaseURL+"/api/auth/github/callback")
+	// cfg.GitHubRedirectURL = getEnv("GITHUB_REDIRECT_URL", cfg.GitHubWebhookBaseURL+"/api/auth/github/callback")
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -123,8 +123,8 @@ func (c *Config) validate() error {
 	required := map[string]string{
 		"CLOUDFLARE_API_TOKEN":  c.CloudflareAPIToken,
 		"CLOUDFLARE_ACCOUNT_ID": c.CloudflareAccountID,
-		"MAIN_DOMAIN":           c.MainDomain,
-		"DB_PASSWORD":           c.DBPassword,
+		// "MAIN_DOMAIN":           c.MainDomain,
+		"DB_PASSWORD": c.DBPassword,
 	}
 	var missing []string
 	for k, v := range required {
