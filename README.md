@@ -106,8 +106,8 @@ Health check: `GET /healthz` → `{"status":"ok"}`.
 | `APP_ENV` | `development` | `production` enables the `Secure` cookie and requires a `JWT_SECRET` other than the default |
 | `MAIN_DOMAIN` | — (required) | Parent domain; apps are served at `<slug>.<MAIN_DOMAIN>` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | — (required) | Cloudflare credentials |
-| `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_TUNNEL_NAME` | | Zone & tunnel name |
-| `CLOUDFLARE_TUNNEL_TOKEN` | | Used by the `cloudflared` container in compose |
+| `CLOUDFLARE_ZONE_ID` | | Zone used for custom-domain CNAME records |
+| `CLOUDFLARE_TUNNEL_ID` | | UUID of the Master Tunnel; custom domains CNAME to `<UUID>.cfargotunnel.com` |
 | `WORKSPACE_PATH` | `/var/lib/paas/workspace` | Location for cloned/extracted source & uploads |
 | `DB_HOST/PORT/USER/PASSWORD/NAME/SSLMODE` | `DB_PASSWORD` required | Platform PostgreSQL connection |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | | OAuth App credentials |
@@ -136,9 +136,9 @@ The webhook is installed automatically on the first deploy of a repo when `auto_
 
 ## 6. Cloudflare Tunnel & Traefik setup
 
-1. Zero Trust → Networks → Tunnels → create a tunnel, copy the token into `CLOUDFLARE_TUNNEL_TOKEN`.
-2. Add a **Public Hostname**: `*.yourdomain.com` and `api.yourdomain.com`, service `http://traefik:80`.
-3. `docker compose up -d` runs `cloudflared` alongside Traefik and the backend.
+1. Create one **Master Tunnel** via CLI (`cloudflared tunnel create <name>`), put its UUID in `CLOUDFLARE_TUNNEL_ID` and in `deployments/cloudflare/config.yml`.
+2. Route the wildcard once: `cloudflared tunnel route dns <name> "*.yourdomain.com"` (ingress in `config.yml` sends `*.yourdomain.com` and `api.yourdomain.com` to `http://traefik:80`).
+3. `docker compose up -d` runs `cloudflared` alongside Traefik and the backend. Deployments never call the Cloudflare API; Traefik routes by Host label. Only external custom domains create a CNAME to the Master Tunnel.
 
 Each app container is given Traefik labels automatically:
 
