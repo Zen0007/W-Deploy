@@ -474,13 +474,31 @@
         </div>
       </div>
 
-          <!-- Panel: local path -->
+         <!-- Panel: local path -->
       <div id="panelLocal" role="tabpanel" aria-labelledby="tabLocal" class="hidden space-y-4">
+        
+        <!-- Opsi 1: Upload dari Komputer Lokal -->
         <div>
-          <label for="inpLocalPath" class="lbl">Absolute path</label>
-          <input id="inpLocalPath" type="text" class="input font-mono" placeholder="/srv/apps/my-app" autocomplete="off" spellcheck="false">
+          <label class="lbl">Upload Local Folder</label>
+          <div class="rounded-lg border border-dashed border-line bg-subtle p-4 text-center transition-colors hover:border-accent cursor-pointer relative">
+            <input type="file" id="inpLocalFiles" webkitdirectory directory multiple class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto h-6 w-6 text-zinc-400 mb-2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+            <p id="uploadLabel" class="text-sm font-medium text-zinc-200">Click to select a folder</p>
+            <p class="text-xs text-zinc-500 mt-1">Files will be uploaded to the server</p>
+          </div>
+        </div>
+
+        <div class="relative">
+          <div class="absolute inset-0 flex items-center" aria-hidden="true"><div class="w-full border-t border-line"></div></div>
+          <div class="relative flex justify-center"><span class="bg-panel px-2 text-xs text-zinc-500">OR</span></div>
+        </div>
+
+        <!-- Opsi 2: Ketik Path Server (Windows / Linux) -->
+        <div>
+          <label for="inpLocalPath" class="lbl">Server Absolute Path</label>
+          <input id="inpLocalPath" type="text" class="input font-mono" placeholder="/srv/apps/my-app atau C:\apps\my-app" autocomplete="off" spellcheck="false">
           <p class="mt-1.5 text-xs text-zinc-500">
-            Path must be accessible inside the backend container. Ensure the directory is mounted via <code class="rounded bg-subtle px-1 py-0.5 text-[11px]">docker-compose.yml</code>.
+            If the code is already on the server. Path must be mounted in <code class="rounded bg-subtle px-1 py-0.5 text-[11px]">docker-compose.yml</code>.
           </p>
         </div>
       </div>
@@ -660,12 +678,16 @@ function closeAllResourceWs() {
 const API_BASE = 'https://api.wdeploy.my.id';
 /** Centralised fetch with session authentication and JSON parsing. */
 async function apiFetch(url, opts) {
- const fullURL = url.startsWith('http') ? url : API_BASE + url;
+  const fullURL = url.startsWith('http') ? url : API_BASE + url;
   const options = Object.assign({ credentials: 'include', headers: {} }, opts || {});
+  options.headers = new Headers(options.headers);
+  
   if (sessionToken && !options.headers.has('Authorization')) {
     options.headers.set('Authorization', 'Bearer ' + sessionToken);
   }
-  if (options.body && typeof options.body === 'object') {
+  
+  // HANYA stringify jika body adalah objek biasa (bukan FormData)
+  if (options.body && !(options.body instanceof FormData) && typeof options.body === 'object') {
     options.body = JSON.stringify(options.body);
     options.headers.set('Content-Type', 'application/json');
   }
@@ -910,13 +932,24 @@ async function fetchAllDeploys() {
 }
 
 // ─── Deploy (POST /api/deploy) ────────────────────────────────────────────────
-
 async function deployNow() {
   if ($('#btnDeploy').disabled) return;
+  
+  const isImp  = deployTab === 'import';
+  const repoVal = $('#selRepo').value;
   const branch  = $('#inpBranch').value.trim() || 'main';
- 
+  
+  const localPath = $('#inpLocalPath').value.trim();
+  const localFiles = $('#inpLocalFiles').files;
+  const isUpload = localFiles.length > 0;
+
+  // Validasi
   if (isImp && !repoVal) {
     toast('info', 'Repository required', 'Choose a repository to deploy from.');
+    return;
+  }
+  if (!isImp && !isUpload && !localPath) {
+    toast('info', 'Source required', 'Please upload a folder or provide a server path.');
     return;
   }
 
@@ -924,15 +957,40 @@ async function deployNow() {
   $('#btnDeployCancel').disabled = true;
   $('#btnDeployX').disabled = true;
   $('#deploySpin').classList.remove('hidden');
-  $('#deployLabel').textContent = 'Deploying…';
+  $('#deployLabel').textContent = isUpload ? 'Uploading...' : 'Deploying…';
 
-const payload = isImp
-  ? { source: 'github', repo: repoVal, branch: branch }
-  : { source: 'local', path: path }; // watch: watchOn dihapus
+  let payload;
+  let headers = {};
+
+  if (isImp) {
+    // 1. GitHub
+    payload = { source: 'github', repo: repoVal, branch: branch };
+    headers['Content-Type'] = 'application/json';
+  } else if (isUpload) {
+    // 2. Upload Folder via FormData
+    payload = new FormData();
+    payload.append('source', 'upload');
+    // Masukkan semua file beserta path relatifnya (folder structure)
+    for (let i = 0; i < localFiles.length; i++) {
+      payload.append('files', localFiles[i], localFiles[i].webkitRelativePath);
+    }
+    // headers Content-Type dibiarkan kosong, browser akan mengaturnya (multipart/form-data)
+  } else {
+    // 3. Server Absolute Path
+    payload = { source: 'local', path: localPath };
+    headers['Content-Type'] = 'application/json';
+  }
+
   try {
-    await apiFetch('/api/deploy', { method: 'POST', body: payload });
+    // Panggil apiFetch. Perhatikan jika isUpload, kita tidak perlu JSON.stringify
+    await apiFetch('/api/deploy', { 
+      method: 'POST', 
+      body: payload,
+      headers: headers
+    });
+    
     closeModal('modalDeploy');
-    toast('success', 'Deployment queued', (isImp ? repoVal + '@' + branch : path) + ' · building…');
+    toast('success', 'Deployment queued', (isImp ? repoVal + '@' + branch : (isUpload ? 'Uploaded files' : localPath)) + ' · building…');
     await fetchApps();
     await fetchAllDeploys();
   } catch(err) {
@@ -1882,6 +1940,17 @@ function init() {
   $('#selRepo').addEventListener('change', function() {
     const r = REPOS.find(function(x) { return x.name === $('#selRepo').value; });
     if (r) $('#inpBranch').value = r.defaultBranch;
+  });
+    // Event listener untuk folder upload
+  $('#inpLocalFiles').addEventListener('change', function(e) {
+    if (this.files.length > 0) {
+      // Ambil nama folder root (webkitRelativePath contohnya: "my-app/src/index.js")
+      const folderName = this.files[0].webkitRelativePath.split('/')[0];
+      $('#uploadLabel').textContent = folderName + ' (' + this.files.length + ' files)';
+      $('#inpLocalPath').value = ''; // Kosongkan path manual jika upload dipilih
+    } else {
+      $('#uploadLabel').textContent = 'Click to select a folder';
+    }
   });
  
   // Custom database dropdown (keyboard: Arrow/Enter/Escape)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,11 +50,34 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "form tidak valid atau file terlalu besar (maks 200 MB)")
 			return
 		}
+
+		// Frontend mengirim source="upload"
+		req.SourceType = string(constants.SourceZip) // Tetap gunakan tipe Zip agar service layer tidak perlu diubah
+
+		// Ambil nama folder dari file pertama sebagai default name & slug
+		files := r.MultipartForm.File["files"]
+		defaultName := "uploaded-app"
+		if len(files) > 0 {
+			// fileHeader.Filename biasanya berformat "nama-folder/path/ke/file.go"
+			parts := strings.Split(files[0].Filename, "/")
+			if len(parts) > 0 && parts[0] != "" {
+				defaultName = parts[0]
+			}
+		}
+
 		req.Name = r.FormValue("name")
+		if req.Name == "" {
+			req.Name = defaultName
+		}
+
 		req.Slug = r.FormValue("slug")
+		if req.Slug == "" {
+			// Jika frontend tidak mengirim slug, buat sederhana dari nama folder
+			req.Slug = strings.ToLower(strings.ReplaceAll(defaultName, " ", "-"))
+		}
+
 		req.Buildpack = r.FormValue("buildpack")
 		req.Database = r.FormValue("database")
-		req.SourceType = string(constants.SourceZip)
 		req.Port, _ = strconv.Atoi(r.FormValue("port"))
 		if raw := r.FormValue("env"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &req.Env); err != nil {
@@ -90,7 +114,8 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if app.SourceType == string(constants.SourceZip) {
-		path, err := h.saveZip(r, app.Slug)
+		// Panggil fungsi baru kita
+		path, err := h.saveFolderAsZip(r, app.Slug)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -117,41 +142,47 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// saveZip menyimpan file upload ke workspace dan memvalidasi magic number ZIP.
-func (h *DeployHandler) saveZip(r *http.Request, slug string) (string, error) {
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		return "", errors.New("file .zip wajib diunggah pada field \"file\"")
-	}
-	defer file.Close()
-
-	magic := make([]byte, 4)
-	if _, err := io.ReadFull(file, magic); err != nil || string(magic[:2]) != "PK" {
-		return "", errors.New("file bukan zip yang valid")
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return "", err
+// saveFolderAsZip menyimpan folder sebagai file zip di workspace dan memvalidasi magic number ZIP.
+func (h *DeployHandler) saveFolderAsZip(r *http.Request, slug string) (string, error) {
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		return "", fmt.Errorf("file zip tidak ditemukan")
 	}
 
 	dir := filepath.Join(h.workspace, "uploads")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", errors.New("gagal menyiapkan direktori upload")
+		return "", fmt.Errorf("gagal membuat folder upload: %v", err)
 	}
+
 	dst := filepath.Join(dir, fmt.Sprintf("%s-%d.zip", slug, time.Now().UnixNano()))
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", errors.New("gagal menyimpan upload")
+		return "", errors.New("gagal membuat file zip")
 	}
+
 	defer out.Close()
 
-	if _, err := io.Copy(out, io.LimitReader(file, maxZipUpload+1)); err != nil {
-		_ = os.Remove(dst)
-		return "", errors.New("gagal menyimpan upload")
+	zipWriter := zip.NewWriter(out)
+	defer zipWriter.Close()
+
+	for _, fileHeader := range files {
+		// open file form
+		file, err := fileHeader.Open()
+		if err != nil {
+			return "", fmt.Errorf("gagal membuka file %s: %v", fileHeader.Filename, err)
+		}
+		w, err := zipWriter.Create(fileHeader.Filename)
+		if err != nil {
+			file.Close()
+			return "", fmt.Errorf("gagal membuat entry zip untuk %s: %v", fileHeader.Filename, err)
+		}
+		if _, err := io.Copy(w, file); err != nil {
+			file.Close()
+			return "", fmt.Errorf("gagal menulis file %s ke zip: %v", fileHeader.Filename, err)
+		}
+		file.Close()
 	}
-	if fi, err := out.Stat(); err == nil && fi.Size() > maxZipUpload {
-		_ = os.Remove(dst)
-		return "", errors.New("ukuran zip melebihi 200 MB")
-	}
+
 	return dst, nil
 }
 
