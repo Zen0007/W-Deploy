@@ -108,19 +108,18 @@ type EnvVar struct {
 
 func (EnvVar) TableName() string { return "env_vars" }
 
-// UserToken menyimpan access token GitHub milik pengguna (terenkripsi AES-GCM).
+// internal/repository/user_token_repo.go
 type UserToken struct {
-	ID          uint   `gorm:"primaryKey" json:"id"`
-	GitHubID    int64  `gorm:"uniqueIndex;not null" json:"github_id"`
-	Login       string `gorm:"uniqueIndex;size:100;not null" json:"login"`
-	AvatarURL   string `gorm:"size:500" json:"avatar_url"`
-	Name        string `gorm:"size:200" json:"name"`
-	AccessToken string `gorm:"type:text;not null" json:"-"` // terenkripsi, tidak pernah dikirim ke client
-	TokenType   string `gorm:"size:30" json:"token_type"`
-	Scope       string `gorm:"size:300" json:"scope"`
-
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uint   `gorm:"primaryKey"`
+	GitHubID    int64  `gorm:"column:github_id;uniqueIndex;not null"`
+	Login       string `gorm:"size:100;not null"`
+	AvatarURL   string `gorm:"size:500"`
+	Name        string `gorm:"size:200"`
+	AccessToken string `gorm:"type:text;not null"`
+	TokenType   string `gorm:"size:20"`
+	Scope       string `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func (UserToken) TableName() string { return "user_tokens" }

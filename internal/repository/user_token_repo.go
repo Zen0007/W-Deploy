@@ -17,12 +17,15 @@ func NewUserTokenRepository(db *DB) *UserTokenRepository {
 
 // Upsert menyimpan token baru atau memperbarui token user yang sama (key: github_id).
 func (r *UserTokenRepository) Upsert(ctx context.Context, t *UserToken) error {
-	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "github_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"login", "avatar_url", "name", "access_token", "token_type", "scope", "updated_at",
-		}),
-	}).Create(t).Error
+	return r.db.WithContext(ctx).Clauses( // internal/repository/user_token_repo.go
+		// internal/repository/user_token_repo.go
+		clause.OnConflict{
+			Columns: []clause.Column{{Name: "github_id"}}, // ← ubah ke git_hub_id
+			DoUpdates: clause.AssignmentColumns([]string{
+				"login", "avatar_url", "name", "access_token",
+				"token_type", "scope", "updated_at",
+			}),
+		}).Create(t).Error
 }
 
 func (r *UserTokenRepository) FindByLogin(ctx context.Context, login string) (*UserToken, error) {

@@ -682,11 +682,11 @@ try {
 }
 
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
-
+const API_BASE = 'https://api.wdeploy.my.id';
 /** Centralised fetch with session authentication and JSON parsing. */
 async function apiFetch(url, opts) {
-  const options = Object.assign({ credentials: 'same-origin', headers: {} }, opts || {});
-  options.headers = new Headers(options.headers);
+ const fullURL = url.startsWith('http') ? url : API_BASE + url;
+  const options = Object.assign({ credentials: 'include', headers: {} }, opts || {});
   if (sessionToken && !options.headers.has('Authorization')) {
     options.headers.set('Authorization', 'Bearer ' + sessionToken);
   }
@@ -761,21 +761,24 @@ async function checkAuth() {
     const user = await apiFetch('/api/auth/me');
     currentUser = user;
     updateUserProfileUI(user);
-    if (user.github_login) {
+
+    const ghLogin = user.github_login || user.login || '';
+    if (ghLogin) {
       connections.github = {
         connected: true,
-        account: '@' + user.github_login,
+        account: '@' + ghLogin,
         scopes: user.github_scopes || 'repo, admin:repo_hook',
-        date: user.github_connected_at ? fmtDateTime(new Date(user.github_connected_at).getTime()) : ''
+        date: user.github_connected_at
+          ? fmtDateTime(new Date(user.github_connected_at).getTime())
+          : fmtDateTime(Date.now())
       };
     }
     return 'authenticated';
   } catch (err) {
     currentUser = null;
-    if (err.status === 401) return 'unauthorized';
-    return 'error';
+    return err.status === 401 ? 'unauthorized' : 'error';
   }
-}
+} 
 
 function updateUserProfileUI(user) {
   const initials = (user.name || user.login || 'U').slice(0, 2).toUpperCase();
@@ -1018,8 +1021,8 @@ async function deleteEnvVar(appId, key) {
 let currentLogWs = null;
 
 function openLogStream(appId) {
-  if (currentLogWs) { try { currentLogWs.close(); } catch(_){} currentLogWs = null; }
-  const ws = new WebSocket(wsURL('/api/ws/apps/' + appId));  // ← pakai wsURL
+   if (currentLogWs) { try { currentLogWs.close(); } catch(_){} currentLogWs = null; }
+  const ws = new WebSocket(wsURL('/api/ws/apps/' + appId));   // ← path relatif
   currentLogWs = ws;
 
   const logBody = $('#logsBody');
@@ -1705,12 +1708,14 @@ function setDiskMetrics(data) {
 // jadi backend membaca token dari ?token= (lihat middleware.RequireAuth).
 function wsURL(path) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  let url = proto + '//' + location.host + path;
+  const host  = 'api.wdeploy.my.id';           // ← host API, bukan location.host
+  let url = proto + '//' + host + path;
   if (sessionToken) {
     url += (path.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(sessionToken);
   }
   return url;
 }
+
 // ── WebSocket manager ─────────────────────────────────────────────────────────
 // Auto-reconnects with exponential back-off (1s → 2s → 4s … max 30s).
 function makeResourceWS(path, onData, onFail) {
@@ -2043,8 +2048,8 @@ function init() {
       return;
     }
 
-    // status === 'authenticated' — sekarang aman fetch data terproteksi
-    if (sessionToken) startResourceMonitoring();
+    /* // status === 'authenticated' — sekarang aman fetch data terproteksi
+    if (sessionToken) startResourceMonitoring(); */
 
     return fetchApps()
       .then(function() {
@@ -2059,9 +2064,7 @@ function init() {
   });
 }
 function showLoginPrompt() {
-  // Jangan hapus #main, cukup tampilkan overlay login di atasnya
   if (document.getElementById('loginOverlay')) return;
-
   const overlay = document.createElement('div');
   overlay.id = 'loginOverlay';
   overlay.className = 'fixed inset-0 z-[90] flex items-center justify-center bg-base';
@@ -2080,7 +2083,7 @@ function showLoginPrompt() {
         <h1 class="text-lg font-medium text-zinc-100">Sign in to continue</h1>
         <p class="mt-1 text-sm text-zinc-400">Authenticate with GitHub to access the W-deploy console.</p>
       </div>
-      <a href="/api/auth/github" class="btn-primary inline-flex">
+      <a href="https://api.wdeploy.my.id/api/auth/github" class="btn-primary inline-flex">
         <svg viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4" aria-hidden="true">
           <path d="${GH_PATH}"/>
         </svg>

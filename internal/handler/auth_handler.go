@@ -9,7 +9,6 @@ import (
 
 	"W-dev/internal/config"
 	"W-dev/internal/middleware"
-	"W-dev/internal/model"
 	"W-dev/internal/service"
 	"W-dev/pkg/util"
 )
@@ -35,8 +34,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	state := util.RandomHex(16)
 	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie, Value: state, Path: "/api/auth", MaxAge: 600,
-		HttpOnly: true, Secure: h.cfg.IsProduction(), SameSite: http.SameSiteLaxMode,
+		Name:     stateCookie,
+		Value:    state,
+		Path:     "/api/auth",
+		MaxAge:   600,
+		Domain:   ".wdeploy.my.id", // ← leading dot = semua subdomain
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.gh.AuthURL(h.cfg.GitHubRedirectURL, state), http.StatusFound)
 }
@@ -51,8 +56,20 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	c, err := r.Cookie(stateCookie)
 	state := q.Get("state")
-	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(c.Value), []byte(state)) != 1 {
-		writeError(w, http.StatusBadRequest, "state OAuth tidak valid")
+
+	if err != nil {
+		log.Printf("[auth] state cookie MISSING — headers=%v", r.Header)
+		writeError(w, http.StatusBadRequest, "state cookie tidak ditemukan")
+		return
+	}
+	if state == "" {
+		log.Printf("[auth] state query param MISSING — url=%s", r.URL.String())
+		writeError(w, http.StatusBadRequest, "state query param tidak ada")
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(c.Value), []byte(state)) != 1 {
+		log.Printf("[auth] state MISMATCH — cookie=%q query=%q", c.Value, state)
+		writeError(w, http.StatusBadRequest, "state cookie tidak cocok")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/api/auth", MaxAge: -1})
@@ -86,23 +103,49 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: middleware.SessionCookie, Value: session, Path: "/",
-		Expires: time.Now().Add(h.cfg.SessionTTL), HttpOnly: true,
-		Secure: h.cfg.IsProduction(), SameSite: http.SameSiteLaxMode,
+		Name:     middleware.SessionCookie,
+		Value:    session,
+		Path:     "/",
+		Domain:   ".wdeploy.my.id", // ← sama
+		MaxAge:   int(h.cfg.SessionTTL.Seconds()),
+		Expires:  time.Now().Add(h.cfg.SessionTTL),
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
 	})
 	// Token juga dikirim lewat fragment (tidak masuk log server) untuk frontend lintas-origin.
 	h.redirectFront(w, r, "token", session)
 }
 
 // Me: GET /api/auth/me — profil user yang sedang login.
+// internal/handler/auth_handler.go
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.User(r)
-	p, err := h.tokens.Profile(r.Context(), claims.Login)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "user tidak ditemukan, login ulang")
+	claims := middleware.User(r) // Login + GitHubID
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "tidak terautentikasi")
 		return
 	}
-	writeJSON(w, http.StatusOK, model.UserView{Login: p.Login, Name: p.Name, AvatarURL: p.AvatarURL})
+
+	// Ambil data lengkap dari DB
+	tok, err := h.tokens.Profile(r.Context(), claims.Login)
+	if err != nil {
+		// fallback: tetap kirim session claims
+		writeJSON(w, http.StatusOK, map[string]any{
+			"login":     claims.Login,
+			"github_id": claims.GitHubID,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"login":               tok.Login,
+		"name":                tok.Name,
+		"avatar_url":          tok.AvatarURL,
+		"github_id":           tok.GitHubID,
+		"github_login":        tok.Login, // alias untuk frontend
+		"github_scopes":       tok.Scope,
+		"github_connected_at": tok.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 // Logout: POST /api/auth/logout — hapus cookie session (token GitHub tetap tersimpan
