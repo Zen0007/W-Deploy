@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"W-dev/internal/config"
@@ -36,8 +35,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	state := util.RandomHex(16)
 	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie, Value: state, Path: "/api/auth",
-		MaxAge: 600, HttpOnly: true, Secure: h.cfg.IsProduction(), SameSite: http.SameSiteLaxMode,
+		Name: stateCookie, Value: state, Path: "/api/auth", MaxAge: 600,
+		HttpOnly: true, Secure: h.cfg.IsProduction(), SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.gh.AuthURL(h.cfg.GitHubRedirectURL, state), http.StatusFound)
 }
@@ -82,6 +81,10 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "gagal membuat session")
 		return
 	}
+	if session == "" { // ← tambahkan
+		writeError(w, http.StatusInternalServerError, "session kosong")
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: middleware.SessionCookie, Value: session, Path: "/",
 		Expires: time.Now().Add(h.cfg.SessionTTL), HttpOnly: true,
@@ -115,6 +118,6 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) redirectFront(w http.ResponseWriter, r *http.Request, key, val string) {
-	base := strings.TrimRight(h.cfg.FrontendURL, "/")
-	http.Redirect(w, r, base+"/auth/callback#"+key+"="+url.QueryEscape(val), http.StatusFound)
+	front := h.cfg.FrontendURL + "/#" + key + "=" + url.QueryEscape(val)
+	http.Redirect(w, r, front, http.StatusFound)
 }
