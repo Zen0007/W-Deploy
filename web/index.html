@@ -680,6 +680,12 @@ try {
 } catch (err) {
   console.warn('Unable to restore the session token:', err);
 }
+function closeAllResourceWs() {
+  if (_resWsCpu)  { _resWsCpu.close();  _resWsCpu  = null; }
+  if (_resWsRam)  { _resWsRam.close();  _resWsRam  = null; }
+  if (_resWsDisk) { _resWsDisk.close(); _resWsDisk = null; }
+}
+
 
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
 const API_BASE = 'https://api.wdeploy.my.id';
@@ -694,23 +700,23 @@ async function apiFetch(url, opts) {
     options.body = JSON.stringify(options.body);
     options.headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(url, options);
-  if (!res.ok) {
+  const res = await fetch(fullURL, options);
+if (!res.ok) {
     let msg = res.statusText || ('HTTP ' + res.status);
     try { const j = await res.clone().json(); msg = j.error || j.message || msg; } catch(_){}
     const err = new Error(msg);
-    err.status = res.status;          // ← tambahan
-   // Token expired saat sedang dipakai — paksa re-login
-  if (res.status === 401 && sessionToken) {
-    sessionToken = '';
-    try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch(_) {}
-    toast('danger', 'Session expired', 'Silakan login kembali.');
-    // Beri delay singkat agar toast sempat terbaca
-    setTimeout(showLoginPrompt, 1200);
-  }
+    err.status = res.status;
 
-  throw err;
-  }
+    // 401 tanpa syarat — cookie bisa expired kapan saja
+    if (res.status === 401) {
+        try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch(_) {}
+        sessionToken = '';
+        closeAllResourceWs();               // hentikan retry loop
+        toast('danger', 'Session expired', 'Silakan login kembali.');
+        setTimeout(showLoginPrompt, 1200);
+    }
+    throw err;
+}
   const ct = res.headers.get('Content-Type') || '';
   return ct.includes('application/json') ? res.json() : res;
 }
@@ -1110,7 +1116,7 @@ function renderContainerRows(tbody, list, withImage) {
 
 // Container actions (real API)
 function containerAction(act, id) {
-  const c = CONTAINERS.find(function(x) { return x.id === id; });
+   const c = CONTAINERS.find(function(x) { return String(x.id) === String(id); });
   if (!c) return;
   if (act === 'logs') {
     $('#logsSub').textContent = c.id + ' · ' + c.image;
@@ -1717,18 +1723,34 @@ function wsURL(path) {
 }
 
 // ── WebSocket manager ─────────────────────────────────────────────────────────
-// Auto-reconnects with exponential back-off (1s → 2s → 4s … max 30s).
 function makeResourceWS(path, onData, onFail) {
   let ws, retryDelay = 1000, retryTimer = null, stopped = false;
   let failCount = 0;
 
   function connect() {
     if (stopped) return;
-    ws = new WebSocket(wsURL(path));       // ← pakai wsURL
+    ws = new WebSocket(wsURL(path));
 
     ws.onopen = function() {
+      console.log('[ws] OPEN  ' + path);     // ← tambahan
       retryDelay = 1000;
       failCount = 0;
+    };
+
+    ws.onerror = function(e) {
+      console.error('[ws] ERROR ' + path, e); // ← tambahan
+    };
+
+    ws.onclose = function(ev) {
+      if (stopped) return;
+      console.log('[ws] CLOSE ' + path +
+                  ' code=' + ev.code +
+                  ' reason=' + ev.reason +
+                  ' fail=' + (failCount + 1)); // ← tambahan
+      failCount++;
+      if (failCount === 3 && onFail) onFail();
+      retryTimer = setTimeout(connect, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 30000);
     };
 
     ws.onmessage = function(ev) {
@@ -1736,23 +1758,13 @@ function makeResourceWS(path, onData, onFail) {
         const data = JSON.parse(ev.data);
         failCount = 0;
         onData(data);
-      } catch (e) { console.warn('Resource WS parse error:', path, e); }
-    };
-
-    ws.onclose = function() {
-      if (stopped) return;
-      failCount++;
-      // Setelah 3 kegagalan beruntun tanpa pernah menerima pesan,
-      // tampilkan status error agar user tahu ini bukan "sedang connect".
-      if (failCount === 3 && onFail) onFail();
-
-      retryTimer = setTimeout(connect, retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 30000);
+      } catch (e) {
+        console.warn('[ws] parse error ' + path, e, ev.data);
+      }
     };
   }
 
   connect();
-
   return {
     close: function() {
       stopped = true;
@@ -1761,7 +1773,6 @@ function makeResourceWS(path, onData, onFail) {
     }
   };
 }
-
 // Hold references so we can close on page unload (optional)
 let _resWsCpu  = null;
 let _resWsRam  = null;
@@ -2029,41 +2040,31 @@ function init() {
   // Monitoring intervals (5s without motion, 2s otherwise)
   setInterval(tickLabels, 1000);
 
-  renderDbSelected();
-  setTab('import');
-
    // ── Bootstrap ────────────────────────────────────────────────────────
-  captureOAuthSession();
-  renderDbSelected();
-  setTab('import');
+ // hapus 2 baris sebelum bootstrap
+captureOAuthSession();
 
-  checkAuth().then(function(status) {
-    if (status === 'unauthorized') {
-      showLoginPrompt();
-      return;
-    }
+checkAuth().then(function(status) {
+    if (status === 'unauthorized') { showLoginPrompt(); return; }
     if (status === 'error') {
-      toast('danger', 'Server unreachable', 'Tidak dapat memverifikasi sesi.');
-      navigate();
-      return;
+        toast('danger', 'Server unreachable', 'Tidak dapat memverifikasi sesi.');
+        navigate();
+        return;
     }
 
-    /* // status === 'authenticated' — sekarang aman fetch data terproteksi
-    if (sessionToken) startResourceMonitoring(); */
+    startResourceMonitoring();
+    console.log('[ws] resource monitoring started');
 
     return fetchApps()
-      .then(function() {
-        return Promise.all([fetchAllDeploys(), fetchRepos()]);
-      })
-      .finally(function() {
-        navigate();
-      });
-  }).catch(function(err) {
+        .then(function() { return Promise.all([fetchAllDeploys(), fetchRepos()]); })
+        .finally(navigate);
+}).catch(function(err) {
     console.warn('Bootstrap error:', err);
     navigate();
-  });
+});
 }
 function showLoginPrompt() {
+  closeAllResourceWs();     
   if (document.getElementById('loginOverlay')) return;
   const overlay = document.createElement('div');
   overlay.id = 'loginOverlay';

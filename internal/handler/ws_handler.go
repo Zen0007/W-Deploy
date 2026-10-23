@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -59,7 +58,7 @@ func (h *WSHandler) Serve(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[ws] log client terhubung (app=%s, remote=%s)", app.Slug, r.RemoteAddr)
 
-	client.Serve(context.Background())
+	client.Serve(r.Context())
 }
 
 // serveResourceRoom menangani pola umum: upgrade → register → snapshot awal →
