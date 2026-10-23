@@ -2,6 +2,8 @@ tunnel: b39ca42f-5072-4747-8be4-a676dfe82143
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
+  - hostname: "wdeploy.my.id"
+    service: http://traefik:80
   - hostname: "api.wdeploy.my.id"
     service: http://traefik:80
   - hostname: "*.wdeploy.my.id"

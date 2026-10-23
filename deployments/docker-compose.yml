@@ -23,12 +23,11 @@ services:
         condition: service_healthy
     networks: [proxy-net]
     labels:
-      # API platform: api.<MAIN_DOMAIN> -> backend
-      traefik.enable: "true"
-      traefik.docker.network: proxy-net
-      traefik.http.routers.paas-api.rule: Host(`api.${MAIN_DOMAIN}`)
-      traefik.http.routers.paas-api.entrypoints: web
-      traefik.http.services.paas-api.loadbalancer.server.port: "8080"
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-net"
+      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || Host(`api.${MAIN_DOMAIN}`) || HostRegexp(`{subdomain:[a-z0-9-]+}.${MAIN_DOMAIN}`)"
+      - "traefik.http.routers.paas-web.entrypoints=web"
+      - "traefik.http.services.paas-web.loadbalancer.server.port=8080"
 
   postgres:
     image: postgres:17-alpine
