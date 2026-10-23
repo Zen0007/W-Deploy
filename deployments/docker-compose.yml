@@ -22,6 +22,7 @@ services:
       - ../data/workspace:/var/lib/paas/workspace
       - /proc:/host/proc:ro
       - /:/host/root:ro
+      - /srv/apps:/srv/apps:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +75,7 @@ services:
     command: tunnel --config /etc/cloudflared/config.yml run
     volumes:
       - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro,z
-      - /home/mrizan/.cloudflared/b39ca42f-5072-4747-8be4-a676dfe82143.json:/etc/cloudflared/credentials.json:ro,z
+      - ./cloudflare/b39ca42f-5072-4747-8be4-a676dfe82143.json:/etc/cloudflared/credentials.json:ro,z
     depends_on: [traefik]
     networks: [proxy-net]
 

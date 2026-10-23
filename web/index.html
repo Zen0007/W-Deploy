@@ -473,12 +473,12 @@
               <option value="release/2.15"></option>
             </datalist>
           </div>
-          <div>
+          /* <div>
             <label for="inpRoot" class="lbl">Root directory</label>
             <input id="inpRoot" type="text" class="input" value="/" autocomplete="off" spellcheck="false">
-          </div>
+          </div> */
         </div>
-        <div class="grid gap-4 sm:grid-cols-2">
+        /* <div class="grid gap-4 sm:grid-cols-2">
           <div>
             <label for="inpBuild" class="lbl">Build command</label>
             <input id="inpBuild" type="text" class="input" placeholder="npm run build" autocomplete="off" spellcheck="false">
@@ -487,15 +487,15 @@
             <label for="inpOutput" class="lbl">Output directory</label>
             <input id="inpOutput" type="text" class="input" placeholder="dist" autocomplete="off" spellcheck="false">
           </div>
-        </div>
-        <div>
+        </div> */
+        /* <div>
           <label for="inpWebhook" class="lbl">Webhook URL</label>
           <div class="flex gap-2">
             <input id="inpWebhook" type="text" readonly class="input flex-1 font-mono text-xs" value="https://hooks.acme.dev/dpl/8f4e2a91-c7d3">
             <button type="button" id="btnCopyWebhook" class="btn-outline shrink-0" data-copy="https://hooks.acme.dev/dpl/8f4e2a91-c7d3">Copy</button>
           </div>
           <p class="mt-1.5 text-xs text-zinc-500">Add this URL as a push webhook to trigger automatic deployments.</p>
-        </div>
+        </div> */
       </div>
 
       <!-- Panel: local path -->
@@ -506,10 +506,10 @@
           <p class="mt-1.5 text-xs text-zinc-500">Path must be readable by the deploy-agent user on the target host.</p>
         </div>
         <div class="flex items-center justify-between gap-3 rounded-lg border border-line bg-subtle px-3 py-2.5">
-          <div>
+          /* <div>
             <p id="watchLabel" class="text-sm text-zinc-100">Watch for file changes</p>
             <p class="text-xs text-zinc-500">Rebuild automatically when files change on disk.</p>
-          </div>
+          </div> */
           <button type="button" id="swWatch" role="switch" aria-checked="true" aria-labelledby="watchLabel" class="relative h-5 w-9 shrink-0 rounded-full border border-line bg-accent transition-colors">
             <span class="switch-knob absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-zinc-100 transition-transform translate-x-4"></span>
           </button>
@@ -815,12 +815,11 @@ async function logoutUser() {
 async function fetchRepos() {
   try {
     const data = await apiFetch('/api/github/repos');
-    // Normalise to the shape the renderer expects
     REPOS = (Array.isArray(data) ? data : []).map(function(r) {
       return {
         name:          r.full_name || r.name,
         provider:      'github',
-        lang:          r.language  || 'Unknown',
+        lang:          r.language || 'Unknown',
         color:         langColor(r.language),
         updatedH:      r.updated_at ? Math.max(0, Math.round((Date.now() - new Date(r.updated_at).getTime()) / 36e5)) : 0,
         defaultBranch: r.default_branch || 'main'
@@ -828,11 +827,12 @@ async function fetchRepos() {
     });
     renderRepoList();
     $('#repoCount').textContent = REPOS.length + ' repositories';
-  } catch(err) {
+    console.log('[repos] loaded', REPOS.length);
+  } catch (err) {
+    console.error('[repos] fetch error', err.status, err.message);
     toast('danger', 'Repos error', err.message);
   }
 }
-
 function langColor(lang) {
   const MAP = { TypeScript: '#3178C6', JavaScript: '#F7DF1E', Go: '#00ADD8', Python: '#3572A5',
     Rust: '#DEA584', Ruby: '#701516', Java: '#B07219', Kotlin: '#A97BFF', HCL: '#844FBA',

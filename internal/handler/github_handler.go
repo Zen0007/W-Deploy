@@ -1,11 +1,9 @@
 package handler
 
 import (
-	"slices"
 	"log"
 	"net/http"
-	"strconv"
-	"strings"
+	"slices"
 
 	"W-dev/internal/middleware"
 	"W-dev/internal/service"
@@ -23,46 +21,42 @@ func NewGitHubHandler(gh *service.GitHubService, tokens *service.TokenService) *
 
 // Repos: GET /api/github/repos?page=1&per_page=30&type=all&sort=updated
 func (h *GitHubHandler) Repos(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.User(r)
-	token, err := h.tokens.Get(r.Context(), claims.Login)
-	if err != nil {
-		log.Printf("[github] baca token: %v", err)
-		writeError(w, http.StatusInternalServerError, "gagal membaca token GitHub")
-		return
-	}
-	if token == "" {
-		writeError(w, http.StatusUnauthorized, "token GitHub tidak ada, login ulang dengan GitHub")
+	login := middleware.User(r).Login
+	if login == "" {
+		writeError(w, http.StatusUnauthorized, "sesi tidak valid")
 		return
 	}
 
-	q := r.URL.Query()
-	page, _ := strconv.Atoi(q.Get("page"))
-	perPage, _ := strconv.Atoi(q.Get("per_page"))
-	opts := &service.ListRepositoriesOptions{
-		Type:      allow(q.Get("type"), "all", "owner", "public", "private", "member"),
-		Sort:      allow(q.Get("sort"), "created", "updated", "pushed", "full_name"),
-		Direction: allow(q.Get("direction"), "asc", "desc"),
-		PerPage:   perPage,
-		Page:      page,
-	}
-
-	repos, err := h.gh.FetchUserRepositories(r.Context(), token, opts)
+	tok, err := h.tokens.Get(r.Context(), login)
 	if err != nil {
-		log.Printf("[github] repos: %v", err)
-		if strings.Contains(err.Error(), "HTTP 401") {
-			writeError(w, http.StatusUnauthorized, "token GitHub tidak valid/kedaluwarsa, login ulang")
-			return
-		}
-		writeError(w, http.StatusBadGateway, "gagal mengambil repository dari GitHub")
+		log.Printf("[github] DECRYPT FAILED for %s: %v", login, err)
+		writeError(w, http.StatusInternalServerError,
+			"gagal decrypt token: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"repositories": repos, "page": opts.Page, "per_page": opts.PerPage})
+	if tok == "" {
+		log.Printf("[github] TOKEN EMPTY for %s", login)
+		writeError(w, http.StatusUnauthorized, "token GitHub tidak ada — login ulang")
+		return
+	}
+
+	log.Printf("[github] FETCH for %s (token_len=%d)", login, len(tok))
+
+	repos, err := h.gh.FetchUserRepositories(r.Context(), tok, nil)
+	if err != nil {
+		log.Printf("[github] FETCH FAILED for %s: %v", login, err)
+		writeError(w, http.StatusBadGateway, "GitHub: "+err.Error())
+		return
+	}
+
+	log.Printf("[github] OK %d repos for %s", len(repos), login)
+	writeJSON(w, http.StatusOK, repos)
 }
 
 // allow mengembalikan v hanya jika termasuk whitelist (selain itu "").
 func allow(v string, ok ...string) string {
 	if slices.Contains(ok, v) {
-			return v
-		}
+		return v
+	}
 	return ""
 }
