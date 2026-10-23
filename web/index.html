@@ -453,7 +453,7 @@
         <button type="button" role="tab" id="tabLocal" class="tab-btn rounded-md px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-100" aria-selected="false" tabindex="-1">Local path</button>
       </div>
 
-      <!-- Panel: import from provider -->
+            <!-- Panel: import from provider -->
       <div id="panelImport" role="tabpanel" aria-labelledby="tabImport" class="space-y-4">
         <div>
           <label for="selRepo" class="lbl">Repository</label>
@@ -462,57 +462,26 @@
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </div>
         </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label for="inpBranch" class="lbl">Branch</label>
-            <input id="inpBranch" type="text" class="input" list="dlBranch" value="main" autocomplete="off" spellcheck="false">
-            <datalist id="dlBranch">
-              <option value="main"></option>
-              <option value="develop"></option>
-              <option value="release/2.14"></option>
-              <option value="release/2.15"></option>
-            </datalist>
-          </div>
-          /* <div>
-            <label for="inpRoot" class="lbl">Root directory</label>
-            <input id="inpRoot" type="text" class="input" value="/" autocomplete="off" spellcheck="false">
-          </div> */
+        <div>
+          <label for="inpBranch" class="lbl">Branch</label>
+          <input id="inpBranch" type="text" class="input" list="dlBranch" value="main" autocomplete="off" spellcheck="false">
+          <datalist id="dlBranch">
+            <option value="main"></option>
+            <option value="develop"></option>
+            <option value="release/2.14"></option>
+            <option value="release/2.15"></option>
+          </datalist>
         </div>
-        /* <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label for="inpBuild" class="lbl">Build command</label>
-            <input id="inpBuild" type="text" class="input" placeholder="npm run build" autocomplete="off" spellcheck="false">
-          </div>
-          <div>
-            <label for="inpOutput" class="lbl">Output directory</label>
-            <input id="inpOutput" type="text" class="input" placeholder="dist" autocomplete="off" spellcheck="false">
-          </div>
-        </div> */
-        /* <div>
-          <label for="inpWebhook" class="lbl">Webhook URL</label>
-          <div class="flex gap-2">
-            <input id="inpWebhook" type="text" readonly class="input flex-1 font-mono text-xs" value="https://hooks.acme.dev/dpl/8f4e2a91-c7d3">
-            <button type="button" id="btnCopyWebhook" class="btn-outline shrink-0" data-copy="https://hooks.acme.dev/dpl/8f4e2a91-c7d3">Copy</button>
-          </div>
-          <p class="mt-1.5 text-xs text-zinc-500">Add this URL as a push webhook to trigger automatic deployments.</p>
-        </div> */
       </div>
 
-      <!-- Panel: local path -->
+          <!-- Panel: local path -->
       <div id="panelLocal" role="tabpanel" aria-labelledby="tabLocal" class="hidden space-y-4">
         <div>
           <label for="inpLocalPath" class="lbl">Absolute path</label>
-          <input id="inpLocalPath" type="text" class="input font-mono" value="/srv/apps/acme-web" autocomplete="off" spellcheck="false">
-          <p class="mt-1.5 text-xs text-zinc-500">Path must be readable by the deploy-agent user on the target host.</p>
-        </div>
-        <div class="flex items-center justify-between gap-3 rounded-lg border border-line bg-subtle px-3 py-2.5">
-          /* <div>
-            <p id="watchLabel" class="text-sm text-zinc-100">Watch for file changes</p>
-            <p class="text-xs text-zinc-500">Rebuild automatically when files change on disk.</p>
-          </div> */
-          <button type="button" id="swWatch" role="switch" aria-checked="true" aria-labelledby="watchLabel" class="relative h-5 w-9 shrink-0 rounded-full border border-line bg-accent transition-colors">
-            <span class="switch-knob absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-zinc-100 transition-transform translate-x-4"></span>
-          </button>
+          <input id="inpLocalPath" type="text" class="input font-mono" placeholder="/srv/apps/my-app" autocomplete="off" spellcheck="false">
+          <p class="mt-1.5 text-xs text-zinc-500">
+            Path must be accessible inside the backend container. Ensure the directory is mounted via <code class="rounded bg-subtle px-1 py-0.5 text-[11px]">docker-compose.yml</code>.
+          </p>
         </div>
       </div>
 
@@ -944,11 +913,8 @@ async function fetchAllDeploys() {
 
 async function deployNow() {
   if ($('#btnDeploy').disabled) return;
-  const isImp  = deployTab === 'import';
-  const repoVal = $('#selRepo').value;
   const branch  = $('#inpBranch').value.trim() || 'main';
-  const path    = $('#inpLocalPath').value.trim() || '/srv/apps/acme-web';
-
+ 
   if (isImp && !repoVal) {
     toast('info', 'Repository required', 'Choose a repository to deploy from.');
     return;
@@ -960,15 +926,9 @@ async function deployNow() {
   $('#deploySpin').classList.remove('hidden');
   $('#deployLabel').textContent = 'Deploying…';
 
-  const payload = isImp
-    ? { source: 'github', repo: repoVal, branch: branch,
-        root_directory: $('#inpRoot').value.trim() || '/',
-        build_command:  $('#inpBuild').value.trim(),
-        output_dir:     $('#inpOutput').value.trim(),
-        db_type:        dbVal !== 'none' ? dbVal : undefined,
-        database_url:   dbVal === 'env'  ? $('#inpDbUrl').value.trim() : undefined }
-    : { source: 'local', path: path, watch: watchOn };
-
+const payload = isImp
+  ? { source: 'github', repo: repoVal, branch: branch }
+  : { source: 'local', path: path }; // watch: watchOn dihapus
   try {
     await apiFetch('/api/deploy', { method: 'POST', body: payload });
     closeModal('modalDeploy');
@@ -1602,11 +1562,6 @@ function resetDeploy(opts) {
       return '<option value="' + esc(x.name) + '"' + (x.name === repo ? ' selected' : '') + '>' + esc(x.name) + '</option>';
     }).join('');
   $('#inpBranch').value = r ? r.defaultBranch : 'main';
-  $('#inpRoot').value   = '/';
-  $('#inpBuild').value  = '';
-  $('#inpOutput').value = '';
-  $('#inpLocalPath').value = '/srv/apps/acme-web';
-  setWatch(true);
   dbVal = 'none';
   renderDbSelected();
   setDbOpen(false);
@@ -1928,8 +1883,7 @@ function init() {
     const r = REPOS.find(function(x) { return x.name === $('#selRepo').value; });
     if (r) $('#inpBranch').value = r.defaultBranch;
   });
-  $('#swWatch').addEventListener('click', function() { setWatch(!watchOn); });
-
+ 
   // Custom database dropdown (keyboard: Arrow/Enter/Escape)
   $('#dbSelect').addEventListener('click', function() { setDbOpen(!dbOpen); });
   $('#dbSelect').addEventListener('keydown', function(e) {
