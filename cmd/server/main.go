@@ -94,6 +94,7 @@ func main() {
 	// 7. WebSocket hub, queue, worker
 	hub := websocket.NewHub()
 	queue := worker.NewQueue(cfg.QueueSize)
+	resourceSvc := service.NewResourceService(hub)
 	appSvc := service.NewAppService(appRepo, deployRepo, envRepo, appDBRepo, ghSvc, tokenSvc, traefikSvc, cleanupSvc, queue)
 
 	dw := worker.NewDeployWorker(worker.Deps{
@@ -114,7 +115,7 @@ func main() {
 		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath),
 		App:     handler.NewAppHandler(appSvc),
 		Webhook: handler.NewWebhookHandler(ghSvc, appSvc, appRepo),
-		WS:      handler.NewWSHandler(hub, appSvc, cfg.CORSOrigins),
+		WS:      handler.NewWSHandler(hub, appSvc, resourceSvc, cfg.CORSOrigins),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

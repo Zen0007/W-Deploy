@@ -79,3 +79,28 @@ func (h *Hub) Clients(room string) int {
 	defer h.mu.RUnlock()
 	return len(h.rooms[room])
 }
+
+// Broadcast mengirim event ke semua client di room TANPA menyimpan history.
+// Cocok untuk data realtime yang bersifat point-in-time (CPU, RAM, Disk,
+// progress bar, heartbeat) — client yang baru connect tidak perlu
+// menerima nilai lama yang sudah tidak relevan.
+//
+// Tidak pernah memblokir: client yang lambat akan kehilangan pesan (lihat Client.Send).
+
+func (h *Hub) Broadcast(room string, event any) {
+	h.mu.RLock()
+	clients := make([]*Client, 0, len(h.rooms[room]))
+	for c := range h.rooms[room] {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+
+	// Fast-path tidak ada client,tidak perlu loop.
+
+	if len(clients) == 0 {
+		return
+	}
+	for _, c := range clients {
+		c.Send(event)
+	}
+}

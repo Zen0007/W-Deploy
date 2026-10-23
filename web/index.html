@@ -673,15 +673,26 @@ let dirty     = false;
 let current   = 'overview';
 let currentUser = null;     // set by checkAuth()
 let currentAppId = null;    // used for env-var panel context
+const SESSION_TOKEN_KEY = 'paas_session';
+let sessionToken = '';
+try {
+  sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY) || '';
+} catch (err) {
+  console.warn('Unable to restore the session token:', err);
+}
 
 // ─── Fetch helpers ───────────────────────────────────────────────────────────
 
-/** Centralised fetch with session cookie forwarding and JSON parsing. */
+/** Centralised fetch with session authentication and JSON parsing. */
 async function apiFetch(url, opts) {
-  const options = Object.assign({ credentials: 'include', headers: {} }, opts || {});
+  const options = Object.assign({ credentials: 'same-origin', headers: {} }, opts || {});
+  options.headers = new Headers(options.headers);
+  if (sessionToken && !options.headers.has('Authorization')) {
+    options.headers.set('Authorization', 'Bearer ' + sessionToken);
+  }
   if (options.body && typeof options.body === 'object') {
     options.body = JSON.stringify(options.body);
-    options.headers['Content-Type'] = 'application/json';
+    options.headers.set('Content-Type', 'application/json');
   }
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -691,6 +702,20 @@ async function apiFetch(url, opts) {
   }
   const ct = res.headers.get('Content-Type') || '';
   return ct.includes('application/json') ? res.json() : res;
+}
+
+function captureOAuthSession() {
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const token = params.get('token');
+  if (!token) return;
+
+  sessionToken = token;
+  try {
+    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  } catch (err) {
+    console.warn('Unable to persist the session token for this tab:', err);
+  }
+  history.replaceState(null, '', location.pathname + location.search + '#/overview');
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -730,6 +755,12 @@ async function logoutUser() {
   try {
     await apiFetch('/api/auth/logout', { method: 'POST' });
   } catch(_) {}
+  sessionToken = '';
+  try {
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  } catch (err) {
+    console.warn('Unable to clear the saved session token:', err);
+  }
   currentUser = null;
   window.location.reload();
 }
@@ -1783,6 +1814,7 @@ function init() {
   tickMonitor();
 
   // ── Bootstrap: check auth, then load live data ──────────────────────────
+  captureOAuthSession();
   checkAuth().then(function() {
     return fetchApps();
   }).then(function() {

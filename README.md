@@ -155,7 +155,7 @@ Without Cloudflare Tunnel, set `TRAEFIK_TLS=true`; Traefik will request a certif
 
 1. The frontend redirects the user to `GET /api/auth/github`. The backend generates a random `state` (cookie `oauth_state`, 10 minutes) and then redirects to GitHub.
 2. GitHub calls `GET /api/auth/github/callback?code=…&state=…`. The backend validates `state`, exchanges `code` for an access token, reads the `/user` profile, and stores the token **encrypted with AES-256-GCM**.
-3. The backend creates an HMAC-SHA256-signed session token (`payload.signature`), sends it as an HttpOnly `paas_session` cookie **and** via a redirect to `FRONTEND_URL/auth/callback#token=<session>` for cross-origin frontends.
+3. The backend creates an HMAC-SHA256-signed session token (`payload.signature`), sends it as an HttpOnly `paas_session` cookie **and** via a redirect to `FRONTEND_URL/auth/callback#token=<session>` for cross-origin frontends. The frontend stores that fragment token for the current tab, removes it from the URL, and uses it for API authentication.
 4. Subsequent requests send `Authorization: Bearer <session>` (or the cookie). WebSockets use `?token=<session>` because browsers cannot send custom headers.
 
 `POST /api/auth/logout` clears the cookie. Add `?revoke=true` to also delete the stored GitHub token (webhooks/auto-deploys for that user's apps can no longer clone private repos until they log in again).

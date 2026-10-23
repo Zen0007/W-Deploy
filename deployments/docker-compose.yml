@@ -15,9 +15,13 @@ services:
       DB_PORT: "5432"
       WORKSPACE_PATH: /var/lib/paas/workspace
       DOCKER_HOST: unix:///var/run/docker.sock
+      HOST_PROC: /host/proc
+      HOST_ROOT: /host/root
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../data/workspace:/var/lib/paas/workspace
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
     depends_on:
       postgres:
         condition: service_healthy
