@@ -126,7 +126,7 @@ func (w *DeployWorker) handle(ctx context.Context, job service.DeployJob) {
 
 	_ = w.Deploys.MarkStarted(bg, job.DeploymentID)
 	_ = w.Apps.UpdateStatus(bg, app.ID, string(constants.StatusBuilding), "")
-	r.status(string(constants.StatusBuilding))
+	r.status("source")
 
 	imageTag, err := w.pipeline(ctx, r, app, job)
 	if err != nil {
@@ -202,6 +202,7 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", app.Port))
 
 	// 4. Build
+	r.status(string(constants.StatusBuilding))
 	imageTag := fmt.Sprintf("paas/%s:%d", app.Slug, r.dep)
 	r.logf("==> Build image %s dengan buildpacks...", imageTag)
 

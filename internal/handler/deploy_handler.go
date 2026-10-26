@@ -20,8 +20,16 @@ import (
 	"W-dev/pkg/util"
 )
 
+// serverSourceRoot adalah root folder yang diizinkan untuk deploy lokal (source=local).
+// Dapat dikonfigurasi melalui env LOCAL_SOURCE_ROOT; default ke /srv/apps.
+var serverSourceRoot = func() string {
+	if v := os.Getenv("LOCAL_SOURCE_ROOT"); v != "" {
+		return v
+	}
+	return "/srv/apps"
+}()
+
 const maxZipUpload = 200 << 20 // 200 MiB
-const serverSourceRoot = "/srv/apps"
 
 // DeployHandler menerima permintaan deploy (repo GitHub atau upload ZIP).
 type DeployHandler struct {

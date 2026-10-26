@@ -17,16 +17,18 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
       HOST_PROC: /host/proc
       HOST_ROOT: /host/root
+      LOCAL_SOURCE_ROOT: /mnt/local-sources
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../data/workspace:/var/lib/paas/workspace
       - /proc:/host/proc:ro
       - /:/host/root:ro
       - /srv/apps:/srv/apps:ro
+      - ${LOCAL_SOURCES_HOST_PATH:-./data/local-sources}:/mnt/local-sources:ro
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [proxy-net]
+    networks: [ proxy-net ]
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-net"
@@ -45,11 +47,11 @@ services:
     volumes:
       - paas-pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks: [proxy-net]
+    networks: [ proxy-net ]
 
   traefik:
     image: traefik:v3.6
@@ -64,7 +66,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - traefik-acme:/acme
-    networks: [proxy-net]
+    networks: [ proxy-net ]
 
   # Cloudflare Tunnel: di dashboard Zero Trust, arahkan Public Hostname
   # `*.${MAIN_DOMAIN}` dan `api.${MAIN_DOMAIN}` ke service http://traefik:80
@@ -76,8 +78,8 @@ services:
     volumes:
       - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro,z
       - ./cloudflare/b39ca42f-5072-4747-8be4-a676dfe82143.json:/etc/cloudflared/credentials.json:ro,z
-    depends_on: [traefik]
-    networks: [proxy-net]
+    depends_on: [ traefik ]
+    networks: [ proxy-net ]
 
 volumes:
   paas-pg-data:

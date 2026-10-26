@@ -28,7 +28,9 @@ func (r *AppRepository) FindByID(ctx context.Context, id uint) (*App, error) {
 
 func (r *AppRepository) FindBySlug(ctx context.Context, slug string) (*App, error) {
 	var app App
-	err := r.db.WithContext(ctx).Where("slug = ?", slug).First(&app).Error
+	err := r.db.WithContext(ctx).
+		Where("slug = ?", slug).
+		First(&app).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
