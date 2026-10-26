@@ -40,6 +40,7 @@ func New(embeddedFiles embed.FS, cfg *config.Config, h Handlers, staticDir strin
 	})
 	mux.HandleFunc("GET /api/auth/github", h.Auth.Login)
 	mux.HandleFunc("GET /api/auth/github/callback", h.Auth.Callback)
+	mux.HandleFunc("POST /api/auth/refresh", h.Auth.Refresh)
 	mux.HandleFunc("POST /api/webhook/github", h.Webhook.GitHub) // diamankan lewat signature HMAC
 
 	// Terproteksi

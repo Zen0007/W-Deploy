@@ -1126,7 +1126,10 @@
      *   'unauthorized'   → 401 (belum login / token expired)
      *   'error'          → backend down / network error
      */
-    let sessionTimeoutTimer = null; // Variabel global untuk menyimpan timer
+    let sessionTimeoutTimer = null;
+    let refreshTimeoutTimer = null;    // ← BARU: timer untuk refresh token expiry
+    let refreshCheckInterval = null;   // ← BARU: interval backup untuk deteksi sleep/wake
+
 
     async function checkAuth() {
       try {
@@ -1144,19 +1147,17 @@
           };
         }
 
+        // ─── Setup Access Token Proactive Refresh (sudah ada) ───
         if (user.expires_at) {
           const expireTime = new Date(user.expires_at).getTime();
           const timeLeft = expireTime - Date.now();
 
           if (sessionTimeoutTimer) clearTimeout(sessionTimeoutTimer);
 
-
           if (timeLeft > 0) {
-            // Set timer untuk refresh 1 menit sebelum expired (minimum 5 detik)
             const refreshIn = Math.max(5000, timeLeft - 60000);
-
             sessionTimeoutTimer = setTimeout(async () => {
-              console.log("[auth] Proactively refreshing token...");
+              console.log("[auth] Proactively refreshing access token...");
               try {
                 const res = await fetch(API_BASE + '/api/auth/refresh', { method: 'POST', credentials: 'include' });
                 if (res.ok) {
@@ -1165,12 +1166,10 @@
                     sessionToken = data.token;
                     sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
                   }
-                  // Restart WS karena token query param berubah
                   closeAllResourceWs();
                   startResourceMonitoring();
-                  checkAuth(); // Hitung ulang timer
+                  checkAuth();
                 } else {
-                  // Refresh gagal -> paksa logout
                   closeAllResourceWs();
                   toast('danger', 'Session expired', 'Silakan login kembali.');
                   showLoginPrompt();
@@ -1182,12 +1181,100 @@
           }
         }
 
+        // ─── BARU: Setup Refresh Token Auto-Logout ───
+        setupRefreshTokenAutoLogout(user.refresh_expires_at);
+
         return 'authenticated';
       } catch (err) {
         currentUser = null;
         return err.status === 401 ? 'unauthorized' : 'error';
       }
     }
+
+    function setupRefreshTokenAutoLogout(refreshExpiresAtISO) {
+      // Bersihkan timer lama
+      if (refreshTimeoutTimer) { clearTimeout(refreshTimeoutTimer); refreshTimeoutTimer = null; }
+      if (refreshCheckInterval) { clearInterval(refreshCheckInterval); refreshCheckInterval = null; }
+
+      if (!refreshExpiresAtISO) {
+        console.log('[auth] No refresh_expires_at provided — skipping auto logout timer');
+        return;
+      }
+
+      const expireTime = new Date(refreshExpiresAtISO).getTime();
+      if (isNaN(expireTime)) {
+        console.warn('[auth] Invalid refresh_expires_at:', refreshExpiresAtISO);
+        return;
+      }
+
+      // Fungsi yang dijalankan saat refresh token benar-benar expired
+      const doAutoLogout = async () => {
+        console.log('[auth] Refresh token expired — auto logout');
+        if (sessionTimeoutTimer) clearTimeout(sessionTimeoutTimer);
+        if (refreshTimeoutTimer) clearTimeout(refreshTimeoutTimer);
+        if (refreshCheckInterval) clearInterval(refreshCheckInterval);
+        sessionTimeoutTimer = refreshTimeoutTimer = refreshCheckInterval = null;
+
+        // Hentikan WebSocket
+        closeAllResourceWs();
+
+        // Panggil endpoint logout untuk hapus cookie di backend (best-effort)
+        try {
+          await fetch(API_BASE + '/api/auth/logout', {
+            method: 'POST',
+            credentials: 'include',
+          });
+        } catch (_) { /* ignore */ }
+
+        // Bersihkan state frontend
+        sessionToken = '';
+        try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) { }
+
+        toast('danger', 'Session expired', 'Sesi Anda telah berakhir. Silakan login kembali.');
+        showLoginPrompt();
+      };
+
+      const timeLeft = expireTime - Date.now();
+
+      if (timeLeft <= 0) {
+        // Sudah expired — langsung logout tanpa menunggu
+        console.log('[auth] Refresh token already expired — logging out immediately');
+        doAutoLogout();
+        return;
+      }
+
+      // Set timer untuk auto-logout tepat waktu.
+      // setTimeout max = 2^31-1 ms (~24.8 hari). Jika lebih, pecah jadi chunk.
+      const MAX_TIMEOUT = 2147483647;
+      if (timeLeft <= MAX_TIMEOUT) {
+        refreshTimeoutTimer = setTimeout(doAutoLogout, timeLeft);
+        console.log('[auth] Auto-logout scheduled in', Math.round(timeLeft / 1000), 'seconds');
+      } else {
+        // Untuk kasus ekstrem (>24 hari) — cek secara bertahap
+        console.log('[auth] Refresh token lifetime >24 days — using staged timer');
+        const stage = () => {
+          const remaining = expireTime - Date.now();
+          if (remaining <= 0) { doAutoLogout(); return; }
+          if (remaining <= MAX_TIMEOUT) {
+            refreshTimeoutTimer = setTimeout(doAutoLogout, remaining);
+          } else {
+            refreshTimeoutTimer = setTimeout(stage, MAX_TIMEOUT);
+          }
+        };
+        stage();
+      }
+
+      // Backup check setiap 60 detik — menangani kasus laptop sleep/wake
+      // di mana setTimeout bisa saja "terlewat" tanpa fire.
+      refreshCheckInterval = setInterval(() => {
+        if (Date.now() >= expireTime) {
+          doAutoLogout();
+        }
+      }, 60000);
+    }
+
+
+
     function restartResourceMonitoring() {
       if (_resWsCpu || _resWsRam || _resWsDisk) {
         closeAllResourceWs();
@@ -1205,6 +1292,10 @@
     }
 
     async function logoutUser() {
+      if (sessionTimeoutTimer) { clearTimeout(sessionTimeoutTimer); sessionTimeoutTimer = null; }
+      if (refreshTimeoutTimer) { clearTimeout(refreshTimeoutTimer); refreshTimeoutTimer = null; }
+      if (refreshCheckInterval) { clearInterval(refreshCheckInterval); refreshCheckInterval = null; }
+
       try {
         await apiFetch('/api/auth/logout', { method: 'POST' });
       } catch (_) { }
@@ -2514,6 +2605,11 @@
       });
     }
     function showLoginPrompt() {
+
+      if (sessionTimeoutTimer) { clearTimeout(sessionTimeoutTimer); sessionTimeoutTimer = null; }
+      if (refreshTimeoutTimer) { clearTimeout(refreshTimeoutTimer); refreshTimeoutTimer = null; }
+      if (refreshCheckInterval) { clearInterval(refreshCheckInterval); refreshCheckInterval = null; }
+
       closeAllResourceWs();
       if (document.getElementById('loginOverlay')) return;
       const overlay = document.createElement('div');

@@ -186,16 +186,27 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt := time.Now().Add(h.cfg.SessionTTL).UTC().Format(time.RFC3339)
+	// Kapan access token (paas_session) akan expired
+	accessExpiresAt := time.Now().Add(h.cfg.SessionTTL).UTC().Format(time.RFC3339)
+
+	// Baca refresh token dari cookie untuk mendapatkan expiry-nya
+	// (cookie HttpOnly, tidak bisa dibaca JS — jadi backend yang baca)
+	var refreshExpiresAt string
+	if c, err := r.Cookie("paas_refresh"); err == nil && c.Value != "" {
+		if rtClaims, err := util.VerifySession(h.cfg.JWTSecret, c.Value); err == nil && rtClaims != nil {
+			// rtClaims.Exp adalah Unix timestamp (int64)
+			refreshExpiresAt = time.Unix(rtClaims.Exp, 0).UTC().Format(time.RFC3339)
+		}
+	}
 
 	// Ambil data lengkap dari DB
 	tok, err := h.tokens.Profile(r.Context(), claims.Login)
 	if err != nil {
-		// fallback: tetap kirim session claims
 		writeJSON(w, http.StatusOK, map[string]any{
-			"login":      claims.Login,
-			"github_id":  claims.GitHubID,
-			"expires_at": expiresAt,
+			"login":              claims.Login,
+			"github_id":          claims.GitHubID,
+			"expires_at":         accessExpiresAt,
+			"refresh_expires_at": refreshExpiresAt, // ← baru
 		})
 		return
 	}
@@ -205,10 +216,11 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"name":                tok.Name,
 		"avatar_url":          tok.AvatarURL,
 		"github_id":           tok.GitHubID,
-		"github_login":        tok.Login, // alias untuk frontend
+		"github_login":        tok.Login,
 		"github_scopes":       tok.Scope,
 		"github_connected_at": tok.CreatedAt.Format(time.RFC3339),
-		"expires_at":          expiresAt, // <-- TAMBAHKAN INI
+		"expires_at":          accessExpiresAt,
+		"refresh_expires_at":  refreshExpiresAt, // ← baru
 	})
 }
 
