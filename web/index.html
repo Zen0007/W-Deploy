@@ -1159,6 +1159,7 @@
       if (!res.ok) {
         let msg = res.statusText || ('HTTP ' + res.status);
         try { const j = await res.clone().json(); msg = j.error || j.message || msg; } catch (_) { }
+        console.error('[api] error response:', res.status, msg, url);
         const err = new Error(msg);
         err.status = res.status;
         throw err;
@@ -1430,20 +1431,20 @@
     function normaliseApp(a) {
       return {
         id: a.id,
-        service: a.name,
-        image: a.image || a.docker_image || '—',
+        service: a.name || a.slug || 'app',
+        image: a.image_tag || a.image || a.docker_image || '—',
         status: normaliseStatus(a.status),
         cpu: a.cpu ? a.cpu + '%' : '—',
         mem: a.memory ? a.memory : '—',
         uptime: a.uptime || '—',
-        region: a.region || 'fra1'
+        region: a.region || 'local'
       };
     }
 
     function normaliseStatus(s) {
       const MAP = {
         running: 'Running', stopped: 'Stopped', failed: 'Failed',
-        restarting: 'Restarting', building: 'Building', pending: 'Restarting'
+        restarting: 'Restarting', building: 'Building', pending: 'Building'
       };
       return MAP[(s || '').toLowerCase()] || 'Stopped';
     }
@@ -1451,9 +1452,11 @@
     async function fetchApps() {
       try {
         const data = await apiFetch('/api/apps');
-        CONTAINERS = (Array.isArray(data) ? data : []).map(normaliseApp);
+        const list = Array.isArray(data) ? data : (data && Array.isArray(data.apps) ? data.apps : []);
+        CONTAINERS = list.map(normaliseApp);
         renderRoute();
       } catch (err) {
+        console.error('[apps] fetch error:', err);
         toast('danger', 'Apps error', err.message);
       }
     }
@@ -1513,7 +1516,11 @@
       try {
         const results = await Promise.all(
           CONTAINERS.map(function (c) {
-            return apiFetch('/api/apps/' + c.id + '/deployments').catch(function () { return []; });
+            return apiFetch('/api/apps/' + c.id + '/deployments')
+              .then(function (res) {
+                return Array.isArray(res) ? res : (res && Array.isArray(res.deployments) ? res.deployments : []);
+              })
+              .catch(function () { return []; });
           })
         );
         DEPLOYS = results
@@ -1521,7 +1528,9 @@
           .map(normaliseDeploy)
           .sort(function (a, b) { return b.ts - a.ts; });
         renderDeploymentsPage();
+        renderOverview();
       } catch (err) {
+        console.error('[deploys] fetch error:', err);
         toast('danger', 'Deploys error', err.message);
       }
     }
@@ -1732,8 +1741,9 @@
           return;
         }
         try {
-          const list = await apiFetch('/api/apps/' + appId + '/deployments');
-          if (!Array.isArray(list) || !list.length) return;
+          const res = await apiFetch('/api/apps/' + appId + '/deployments');
+          const list = Array.isArray(res) ? res : (res && Array.isArray(res.deployments) ? res.deployments : []);
+          if (!list.length) return;
           const target = depId ? list.find(function (d) { return d.id === depId; }) : list[0];
           if (!target) return;
           const st = (target.status || '').toLowerCase();
@@ -1918,6 +1928,7 @@
         await fetchApps();
         await fetchAllDeploys();
       } catch (err) {
+        console.error('[deploy] error:', err);
         toast('danger', 'Deploy failed', err.message);
         $('#btnDeploy').disabled = false;
         $('#btnDeployCancel').disabled = false;
@@ -2124,7 +2135,7 @@
       }
 
       renderContainerRows($('#tblOverviewContainers'), CONTAINERS.filter(function (c) {
-        return c.status === 'Running' || c.status === 'Restarting';
+        return c.status === 'Running' || c.status === 'Restarting' || c.status === 'Building';
       }), false);
 
       $('#listActivity').innerHTML = DEPLOYS.slice(0, 5).map(function (d) {
@@ -2755,8 +2766,11 @@
       renderProviderCards();
       renderRepoList();
     }
-    function navigate() {
-      let h = location.hash.replace(/^#\/?/, '');
+    function navigate(target) {
+      if (target && location.hash !== '#/' + target) {
+        location.hash = '#/' + target;
+      }
+      let h = (target || location.hash.replace(/^#\/?/, '')).trim();
       if (!ROUTES[h]) h = 'overview';
       current = h;
 
