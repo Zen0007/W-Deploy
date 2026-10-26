@@ -1,12 +1,14 @@
 package model
 
-// DeployRequest adalah body JSON untuk POST /api/deploy (source = github).
-// Untuk source zip gunakan multipart/form-data dengan field yang sama + file "file".
+// DeployRequest adalah body JSON untuk POST /api/deploy.
+// JSON source "local" menerima path server; upload folder memakai multipart/form-data.
 type DeployRequest struct {
 	Name       string            `json:"name"`
 	Slug       string            `json:"slug"`
+	Source     string            `json:"source"`
 	SourceType string            `json:"source_type"` // github | zip (default: github)
 	RepoFull   string            `json:"repo_full_name"`
+	Path       string            `json:"path"`
 	Branch     string            `json:"branch"`
 	Port       int               `json:"port"`
 	Buildpack  string            `json:"buildpack"`

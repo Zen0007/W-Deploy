@@ -214,6 +214,7 @@ All endpoints (except those marked public) require a session. Errors are always 
 {
   "name": "My Blog",
   "slug": "blog",
+  "source_type": "github",
   "repo_full_name": "octocat/hello-world",
   "branch": "main",
   "port": 3000,
@@ -224,14 +225,27 @@ All endpoints (except those marked public) require a session. Errors are always 
 }
 ```
 
-Only `repo_full_name` is required; `slug` is generated from `name`/repo name if empty. `database`: `postgres | mysql | mongodb | redis`.
+Only `repo_full_name` is required; `source_type` defaults to `github` and `slug` is generated from `name`/repo name if empty. `database`: `postgres | mysql | mongodb | redis`.
 
-**From ZIP** (`multipart/form-data`): `file` field (max 200 MB) + `name`, `slug`, `port`, `buildpack`, `database`, `env` (JSON string).
+**From a folder upload** (`multipart/form-data`): repeat the `files` field with each file and its relative path (max 200 MB), plus `name`, `slug`, `port`, `buildpack`, `database`, and `env` (JSON string).
+
+**From a server folder** (`Content-Type: application/json`):
+
+```json
+{
+  "source": "local",
+  "path": "/srv/apps/my-app"
+}
+```
+
+Server paths must refer to a folder beneath `/srv/apps`, which is mounted read-only in the backend container. Symbolic links are rejected and the folder must not exceed 200 MB. The app name and slug are derived from the folder name.
 
 ```bash
 curl -X POST https://api.yourdomain.com/api/deploy \
   -H "Authorization: Bearer $TOKEN" \
-  -F name="Landing" -F slug=landing -F port=3000 -F file=@app.zip
+  -F name="Landing" -F slug=landing \
+  -F 'files=@package.json;filename=Landing/package.json' \
+  -F 'files=@index.js;filename=Landing/index.js'
 ```
 
 `202` response:

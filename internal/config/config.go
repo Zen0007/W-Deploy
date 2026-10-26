@@ -51,8 +51,9 @@ type Config struct {
 	FrontendURL          string // tujuan redirect setelah login berhasil, contoh: https://app.domainanda.com
 
 	// Security
-	JWTSecret  string // dipakai menandatangani session token & mengenkripsi access token GitHub
-	SessionTTL time.Duration
+	JWTSecret       string // dipakai menandatangani session token & mengenkripsi access token GitHub
+	SessionTTL      time.Duration
+	RefreshTokenTTL time.Duration
 
 	// Worker & Build
 	WorkerCount  int
@@ -100,8 +101,9 @@ func Load() (*Config, error) {
 
 		FrontendURL: getEnv("FRONTEND_URL", "http://localhost:5173"),
 
-		JWTSecret:  getEnv("JWT_SECRET", "change-me"),
-		SessionTTL: time.Duration(getEnvInt("SESSION_TTL_HOURS", 24*7)) * time.Hour,
+		JWTSecret:       getEnv("JWT_SECRET", "change-me"),
+		SessionTTL:      time.Duration(getEnvInt("SESSION_TTL_HOURS", 24*7)) * time.Hour,
+		RefreshTokenTTL: time.Duration(getEnvInt("REFRESH_TOKEN_TTL_HOURS", 24*2)) * time.Hour,
 
 		WorkerCount:  getEnvInt("WORKER_COUNT", 2),
 		QueueSize:    getEnvInt("QUEUE_SIZE", 64),

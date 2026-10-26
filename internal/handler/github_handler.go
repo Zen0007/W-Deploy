@@ -45,7 +45,8 @@ func (h *GitHubHandler) Repos(w http.ResponseWriter, r *http.Request) {
 	repos, err := h.gh.FetchUserRepositories(r.Context(), tok, nil)
 	if err != nil {
 		log.Printf("[github] FETCH FAILED for %s: %v", login, err)
-		writeError(w, http.StatusBadGateway, "GitHub: "+err.Error())
+		// GANTI 502 MENJADI 400 ATAU 401
+		writeError(w, http.StatusBadRequest, "GitHub API Error: "+err.Error())
 		return
 	}
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/url"
@@ -44,6 +45,45 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.gh.AuthURL(h.cfg.GitHubRedirectURL, state), http.StatusFound)
+}
+
+// Refresh: GET /api/auth/refresh — perpanjang session (pakai refresh token).
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("paas_refresh")
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "refresh token tidak ditemukan")
+		return
+	}
+
+	claims, err := util.VerifySession(h.cfg.JWTSecret, cookie.Value)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "refresh token tidak valid")
+		return
+	}
+
+	newAccessToken, err := util.SignSession(h.cfg.JWTSecret, *claims, h.cfg.SessionTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "gagal membuat session baru")
+		return
+	}
+
+	// Set ulang cookie Access Token (wajib pakai Domain yang sama)
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.SessionCookie,
+		Value:    newAccessToken,
+		Path:     "/",
+		Domain:   ".wdeploy.my.id",
+		MaxAge:   int(h.cfg.SessionTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "refreshed",
+		"token":  newAccessToken,
+	})
 }
 
 // Callback: GET /api/auth/github/callback — tukar code, simpan token, buat session.
@@ -92,29 +132,49 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := util.SignSession(h.cfg.JWTSecret,
+	// 1. Generate Access Token (umur pendek, misal 15 menit)
+	accessToken, err := util.SignSession(h.cfg.JWTSecret,
 		util.SessionClaims{Login: user.Login, GitHubID: user.ID}, h.cfg.SessionTTL)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "gagal membuat session")
+		writeError(w, http.StatusInternalServerError, "gagal membuat access session")
 		return
 	}
-	if session == "" { // ← tambahkan
-		writeError(w, http.StatusInternalServerError, "session kosong")
+
+	// 2. Generate Refresh Token (umur panjang, misal 7 hari)
+	refreshToken, err := util.SignSession(h.cfg.JWTSecret,
+		util.SessionClaims{Login: user.Login, GitHubID: user.ID}, h.cfg.RefreshTokenTTL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "gagal membuat refresh session")
 		return
 	}
+
+	// 3. Set Cookie Access Token
 	http.SetCookie(w, &http.Cookie{
 		Name:     middleware.SessionCookie,
-		Value:    session,
+		Value:    accessToken,
 		Path:     "/",
-		Domain:   ".wdeploy.my.id", // ← sama
+		Domain:   ".wdeploy.my.id", // ← Wajib sama dengan Login
 		MaxAge:   int(h.cfg.SessionTTL.Seconds()),
-		Expires:  time.Now().Add(h.cfg.SessionTTL),
 		HttpOnly: true,
 		Secure:   h.cfg.IsProduction(),
 		SameSite: http.SameSiteLaxMode,
 	})
-	// Token juga dikirim lewat fragment (tidak masuk log server) untuk frontend lintas-origin.
-	h.redirectFront(w, r, "token", session)
+
+	// 4. Set Refresh Token Cookie (paas_refresh)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "paas_refresh",
+		Value:    refreshToken,
+		Path:     "/api/auth/refresh", // Hanya dikirim ke endpoint refresh
+		Domain:   ".wdeploy.my.id",    // ← Wajib sama dengan Login
+		MaxAge:   int(h.cfg.RefreshTokenTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Redirect ke frontend...
+	h.redirectFront(w, r, "token", accessToken)
+
 }
 
 // Me: GET /api/auth/me — profil user yang sedang login.
@@ -126,13 +186,16 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expiresAt := time.Now().Add(h.cfg.SessionTTL).UTC().Format(time.RFC3339)
+
 	// Ambil data lengkap dari DB
 	tok, err := h.tokens.Profile(r.Context(), claims.Login)
 	if err != nil {
 		// fallback: tetap kirim session claims
 		writeJSON(w, http.StatusOK, map[string]any{
-			"login":     claims.Login,
-			"github_id": claims.GitHubID,
+			"login":      claims.Login,
+			"github_id":  claims.GitHubID,
+			"expires_at": expiresAt,
 		})
 		return
 	}
@@ -145,6 +208,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"github_login":        tok.Login, // alias untuk frontend
 		"github_scopes":       tok.Scope,
 		"github_connected_at": tok.CreatedAt.Format(time.RFC3339),
+		"expires_at":          expiresAt, // <-- TAMBAHKAN INI
 	})
 }
 
@@ -156,7 +220,32 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 			_ = h.tokens.Revoke(r.Context(), claims.Login)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: middleware.SessionCookie, Value: "", Path: "/", MaxAge: -1})
+
+	// 2. Hapus Access Token (paas_session)
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.SessionCookie, // "paas_session"
+		Value:    "",
+		Path:     "/",
+		Domain:   ".wdeploy.my.id", // Wajib sama dengan saat di-set
+		MaxAge:   -1,               // Instruksi untuk menghapus cookie
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// 3. Hapus Refresh Token (paas_refresh)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "paas_refresh",
+		Value:    "",
+		Path:     "/api/auth/refresh", // Wajib sama dengan Path saat di-set
+		Domain:   ".wdeploy.my.id",    // Wajib sama dengan saat di-set
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   h.cfg.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// 4. Kirim respons sukses
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
 }
 
