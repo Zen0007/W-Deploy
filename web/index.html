@@ -287,6 +287,19 @@
         <p id="sidebarRole" class="text-xs text-zinc-500">Owner</p>
       </div>
     </div>
+
+    <!-- TOMBOL LOGOUT -->
+    <button id="btnLogout" type="button"
+      class="group flex w-full items-center justify-center gap-1.5 rounded-md border border-line bg-transparent px-2 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
+      title="Log out" aria-label="Log out">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+        stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <polyline points="16 17 21 12 16 7" />
+        <line x1="21" x2="9" y1="12" y2="12" />
+      </svg>
+      Log out
+    </button>
   </aside>
   <div id="sidebarBackdrop" class="fixed inset-0 z-30 hidden bg-black/60 lg:hidden" aria-hidden="true"></div>
 
@@ -2502,6 +2515,12 @@
 
       // Logs modal — close WebSocket when modal is dismissed
       function closeLogs() { closeLogStream(); closeModal('modalLogs'); }
+      // Tombol Logout
+      $('#btnLogout').addEventListener('click', function () {
+        if (confirm('Are you sure you want to log out?')) {
+          logoutUser();
+        }
+      });
       $('#btnLogsX').addEventListener('click', closeLogs);
       $('#btnLogsClose').addEventListener('click', closeLogs);
 
