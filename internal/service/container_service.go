@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"W-dev/pkg/docker"
 	"W-dev/pkg/util"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -117,4 +119,28 @@ func (s *ContainerService) WaitReady(ctx context.Context, slug string, port int,
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// StreamLogs men-stream log stdout & stderr dari container Docker runtime.
+func (s *ContainerService) StreamLogs(ctx context.Context, nameOrID string, tail string, follow bool) (io.ReadCloser, error) {
+	if nameOrID == "" {
+		return nil, fmt.Errorf("nama atau ID container kosong")
+	}
+	opts := client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     follow,
+		Tail:       tail,
+	}
+	res, err := s.docker.ContainerLogs(ctx, nameOrID, opts)
+	if err != nil {
+		return nil, err
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		defer res.Close()
+		_, _ = stdcopy.StdCopy(pw, pw, res)
+	}()
+	return pr, nil
 }

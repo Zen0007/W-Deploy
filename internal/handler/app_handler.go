@@ -86,14 +86,16 @@ func (h *AppHandler) Deployments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deployments": list})
 }
 
-// Redeploy: POST /api/apps/{id}/redeploy (hanya source github; zip harus diunggah ulang via /api/deploy)
+// Redeploy: POST /api/apps/{id}/redeploy
+// Hanya untuk source upload/zip (atau local folder).
+// Untuk source Git (GitHub/GitLab), deploy otomatis dipicu oleh Webhook saat ada push ke branch main/target.
 func (h *AppHandler) Redeploy(w http.ResponseWriter, r *http.Request) {
 	app := h.owned(w, r)
 	if app == nil {
 		return
 	}
-	if app.SourceType != string(constants.SourceGitHub) {
-		writeError(w, http.StatusBadRequest, "redeploy hanya untuk source GitHub; unggah ulang zip melalui POST /api/deploy")
+	if app.SourceType == string(constants.SourceGitHub) || app.SourceType == string(constants.SourceGit) {
+		writeError(w, http.StatusBadRequest, "project dari git di-deploy otomatis lewat webhook saat push ke branch main; tombol redeploy manual hanya untuk project upload/zip")
 		return
 	}
 	dep, err := h.apps.Deploy(r.Context(), app, service.DeployOptions{TriggeredBy: "user"})

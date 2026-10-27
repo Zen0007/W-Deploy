@@ -1429,9 +1429,14 @@
 
     /** Map a backend App object to the CONTAINERS row shape. */
     function normaliseApp(a) {
+      const slug = a.slug || a.name || '';
+      const fallbackUrl = slug ? 'https://' + slug + '.wdeploy.my.id' : '';
       return {
         id: a.id,
+        slug: slug,
+        sourceType: a.source_type || 'github',
         service: a.name || a.slug || 'app',
+        url: a.url || fallbackUrl,
         image: a.image_tag || a.image || a.docker_image || '—',
         status: normaliseStatus(a.status),
         cpu: a.cpu ? a.cpu + '%' : '—',
@@ -1991,7 +1996,20 @@
         logBody.textContent = '── Stream connected ──\n';
       };
       ws.onmessage = function (ev) {
-        logBody.textContent += ev.data + '\n';
+        let line = ev.data;
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'log' && msg.line !== undefined) {
+            line = msg.line;
+          } else if (msg.type === 'status') {
+            line = '── Status: ' + msg.status + ' ──';
+          } else if (msg.type === 'done') {
+            line = '── Deployment live: ' + (msg.url || '') + ' ──';
+          } else if (msg.type === 'error') {
+            line = '── Error: ' + (msg.error || '') + ' ──';
+          }
+        } catch (_) {}
+        logBody.textContent += line + '\n';
         logBody.scrollTop = logBody.scrollHeight;
       };
       ws.onerror = function () {
@@ -2013,6 +2031,7 @@
       Running: ['text-emerald-400', 'bg-emerald-400'],
       Stopped: ['text-zinc-400', 'bg-zinc-500'],
       Restarting: ['text-amber-400', 'bg-amber-400'],
+      Building: ['text-amber-400', 'bg-amber-400'],
       Failed: ['text-red-400', 'bg-red-400']
     };
     const DEPLOY_STATUS = {
@@ -2043,14 +2062,25 @@
       }
       tbody.innerHTML = list.map(function (c) {
         const run = c.status === 'Running';
-        // Real actions: logs always available; redeploy / delete for all
+        // Tombol redeploy hanya ditampilkan untuk project upload/zip/local.
+        // Project dari Git (GitHub/GitLab) otomatis di-deploy via webhook saat push ke branch main.
+        const isZipOrLocal = c.sourceType === 'zip' || c.sourceType === 'local';
         const acts = [
-          ['logs', 'Logs', false],
-          ['redeploy', 'Redeploy', false],
-          ['delete', 'Delete', false]
+          ['logs', 'Logs', false]
         ];
+        if (isZipOrLocal) {
+          acts.push(['redeploy', 'Redeploy', false]);
+        }
+        acts.push(['delete', 'Delete', false]);
+        const nameHtml = c.url
+          ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer" class="group/link inline-flex items-center gap-1.5 font-medium text-blue-400 hover:text-blue-300 hover:underline transition-colors" title="Buka ' + esc(c.url) + '">' +
+              esc(c.service) +
+              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 shrink-0 opacity-80 group-hover/link:opacity-100 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+            '</a>'
+          : '<p class="font-medium text-zinc-100">' + esc(c.service) + '</p>';
+
         return '<tr class="group h-12 border-b border-line transition-colors last:border-b-0 hover:bg-white/[0.02]">' +
-          '<td class="whitespace-nowrap px-4 py-2"><p class="font-medium text-zinc-100">' + esc(c.service) + '</p><p class="mt-0.5 text-xs text-zinc-500">' + esc(c.id) + ' · ' + esc(c.region) + '</p></td>' +
+          '<td class="whitespace-nowrap px-4 py-2">' + nameHtml + '<p class="mt-0.5 text-xs text-zinc-500">' + esc(c.id) + ' · ' + esc(c.region) + '</p></td>' +
           (withImage ? '<td class="whitespace-nowrap px-4 font-mono text-xs text-zinc-400">' + esc(c.image) + '</td>' : '') +
           '<td class="px-4 py-2">' + contBadge(c.status) + '</td>' +
           '<td class="px-4 py-2 tabular-nums">' + (run ? c.cpu : '—') + '</td>' +
@@ -2767,10 +2797,14 @@
       renderRepoList();
     }
     function navigate(target) {
-      if (target && location.hash !== '#/' + target) {
-        location.hash = '#/' + target;
+      if (typeof target === 'string' && target.trim()) {
+        const cleanTarget = target.trim();
+        if (location.hash !== '#/' + cleanTarget) {
+          location.hash = '#/' + cleanTarget;
+          return;
+        }
       }
-      let h = (target || location.hash.replace(/^#\/?/, '')).trim();
+      let h = location.hash.replace(/^#\/?/, '').trim();
       if (!ROUTES[h]) h = 'overview';
       current = h;
 

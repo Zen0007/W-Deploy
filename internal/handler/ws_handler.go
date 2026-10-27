@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"bufio"
+	"context"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"W-dev/internal/middleware"
 	"W-dev/internal/service"
@@ -12,13 +15,14 @@ import (
 
 // WSHandler meng-upgrade koneksi ke WebSocket untuk streaming log deploy per app.
 type WSHandler struct {
-	hub      *websocket.Hub
-	apps     *service.AppService
-	resource *service.ResourceService
-	origins  []string
+	hub        *websocket.Hub
+	apps       *service.AppService
+	containers *service.ContainerService
+	resource   *service.ResourceService
+	origins    []string
 }
 
-func NewWSHandler(hub *websocket.Hub, apps *service.AppService, resource *service.ResourceService, corsOrigins string) *WSHandler {
+func NewWSHandler(hub *websocket.Hub, apps *service.AppService, containers *service.ContainerService, resource *service.ResourceService, corsOrigins string) *WSHandler {
 	var origins []string
 	for o := range strings.SplitSeq(corsOrigins, ",") {
 		o = strings.TrimSpace(o)
@@ -29,10 +33,11 @@ func NewWSHandler(hub *websocket.Hub, apps *service.AppService, resource *servic
 		}
 	}
 	return &WSHandler{
-		hub:      hub,
-		apps:     apps,
-		resource: resource,
-		origins:  origins,
+		hub:        hub,
+		apps:       apps,
+		containers: containers,
+		resource:   resource,
+		origins:    origins,
 	}
 }
 
@@ -57,6 +62,33 @@ func (h *WSHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	defer h.hub.Unregister(app.Slug, client)
 
 	log.Printf("[ws] log client terhubung (app=%s, remote=%s)", app.Slug, r.RemoteAddr)
+
+	// Stream log runtime dari Docker container jika container tersedia
+	targetContainer := app.ContainerID
+	if targetContainer == "" {
+		targetContainer = service.ContainerName(app.Slug)
+	}
+	if h.containers != nil && targetContainer != "" {
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		go func() {
+			logsReader, err := h.containers.StreamLogs(ctx, targetContainer, "150", true)
+			if err != nil {
+				return
+			}
+			defer logsReader.Close()
+			scanner := bufio.NewScanner(logsReader)
+			for scanner.Scan() {
+				line := scanner.Text()
+				client.Send(map[string]any{
+					"type": "log",
+					"line": line,
+					"app":  app.Slug,
+					"ts":   time.Now().UTC().Format(time.RFC3339),
+				})
+			}
+		}()
+	}
 
 	client.Serve(r.Context())
 }

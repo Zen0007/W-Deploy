@@ -88,7 +88,8 @@ func (h *WebhookHandler) handlePush(w http.ResponseWriter, r *http.Request, body
 	triggered := 0
 	for i := range apps {
 		app := &apps[i]
-		if app.SourceType != string(constants.SourceGitHub) || app.Branch != branch {
+		// Hanya auto-deploy untuk GitHub/Git source ketika push terjadi pada branch yang dikonfigurasi (default: main)
+		if (app.SourceType != string(constants.SourceGitHub) && app.SourceType != string(constants.SourceGit)) || app.Branch != branch {
 			continue
 		}
 		if _, err := h.apps.Deploy(r.Context(), app, service.DeployOptions{

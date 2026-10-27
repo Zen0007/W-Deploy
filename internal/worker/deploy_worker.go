@@ -151,14 +151,19 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 	// 1. Source
 	switch constants.SourceType(app.SourceType) {
 	case constants.SourceZip:
-		if job.ZipPath == "" {
-			return "", errors.New("source zip tidak tersedia: unggah ulang file .zip")
-		}
-		r.logf("==> Mengekstrak source dari zip...")
-		err := w.Upload.ExtractZip(job.ZipPath, srcDir)
-		_ = os.Remove(job.ZipPath)
-		if err != nil {
-			return "", err
+		if job.ZipPath != "" {
+			r.logf("==> Mengekstrak source dari zip...")
+			err := w.Upload.ExtractZip(job.ZipPath, srcDir)
+			_ = os.Remove(job.ZipPath)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			// Kasus redeploy: source code lama di srcDir dipakai ulang jika tersedia
+			if fi, err := os.Stat(srcDir); err != nil || !fi.IsDir() {
+				return "", errors.New("source zip tidak tersedia di workspace: silakan unggah ulang file/folder")
+			}
+			r.logf("==> Menggunakan source code tersimpan untuk redeploy...")
 		}
 	default:
 		r.logf("==> Clone %s (branch %s)...", app.RepoURL, app.Branch)
@@ -175,6 +180,9 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 		_ = w.Deploys.SetCommit(ctx, r.dep, res.CommitSHA, res.CommitMsg)
 		r.logf("commit %s: %s", short(res.CommitSHA), res.CommitMsg)
 	}
+
+	// Otomatis setup static web server jika project adalah web frontend tanpa server
+	prepareStaticProject(srcDir, app.Port, r.logf)
 
 	// 2. Database (opsional)
 	if job.DBEngine != "" {

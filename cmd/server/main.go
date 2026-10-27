@@ -115,7 +115,7 @@ func main() {
 		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath),
 		App:     handler.NewAppHandler(appSvc),
 		Webhook: handler.NewWebhookHandler(ghSvc, appSvc, appRepo),
-		WS:      handler.NewWSHandler(hub, appSvc, resourceSvc, cfg.CORSOrigins),
+		WS:      handler.NewWSHandler(hub, appSvc, containerSvc, resourceSvc, cfg.CORSOrigins),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
