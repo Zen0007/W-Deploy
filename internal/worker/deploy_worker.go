@@ -127,6 +127,7 @@ func (w *DeployWorker) handle(ctx context.Context, job service.DeployJob) {
 	_ = w.Deploys.MarkStarted(bg, job.DeploymentID)
 	_ = w.Apps.UpdateStatus(bg, app.ID, string(constants.StatusBuilding), "")
 	r.status("source")
+	r.logf("===> Pipeline dimulai untuk %s", app.Slug)
 
 	imageTag, err := w.pipeline(ctx, r, app, job)
 	if err != nil {

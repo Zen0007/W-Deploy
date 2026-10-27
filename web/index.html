@@ -1449,7 +1449,8 @@
     function normaliseStatus(s) {
       const MAP = {
         running: 'Running', stopped: 'Stopped', failed: 'Failed',
-        restarting: 'Restarting', building: 'Building', pending: 'Building'
+        restarting: 'Restarting', building: 'Building', pending: 'Building',
+        deploying: 'Building'
       };
       return MAP[(s || '').toLowerCase()] || 'Stopped';
     }
@@ -1502,6 +1503,9 @@
     // ─── Deployments ─────────────────────────────────────────────────────────────
 
     function normaliseDeploy(d) {
+      let rawStatus = cap(d.status || 'unknown');
+      // Backend stores final success as 'running', map to 'Success' for display
+      if (rawStatus === 'Running') rawStatus = 'Success';
       return {
         id: d.id,
         sha: (d.commit_sha || d.sha || '').slice(0, 7),
@@ -1509,7 +1513,7 @@
         repo: d.repo_url || d.repo || '—',
         branch: d.branch || 'main',
         provider: 'github',
-        status: cap(d.status || 'unknown'),
+        status: rawStatus,
         duration: d.duration || '—',
         ts: d.created_at ? new Date(d.created_at).getTime() : Date.now()
       };
@@ -2032,12 +2036,15 @@
       Stopped: ['text-zinc-400', 'bg-zinc-500'],
       Restarting: ['text-amber-400', 'bg-amber-400'],
       Building: ['text-amber-400', 'bg-amber-400'],
+      Deploying: ['text-blue-400', 'bg-blue-400'],
       Failed: ['text-red-400', 'bg-red-400']
     };
     const DEPLOY_STATUS = {
       Success: ['text-emerald-400', 'bg-emerald-400'],
+      Running: ['text-emerald-400', 'bg-emerald-400'],
       Failed: ['text-red-400', 'bg-red-400'],
       Building: ['text-amber-400', 'bg-amber-400'],
+      Deploying: ['text-blue-400', 'bg-blue-400'],
       Canceled: ['text-zinc-400', 'bg-zinc-500']
     };
     function contBadge(s) {
