@@ -44,11 +44,12 @@ type AppInput struct {
 
 // DeployOptions mengatur satu eksekusi deploy.
 type DeployOptions struct {
-	TriggeredBy string // user | webhook
-	ZipPath     string
-	DBEngine    string
-	CommitSHA   string // opsional (dari webhook)
-	CommitMsg   string
+	TriggeredBy     string // user | webhook
+	ZipPath         string
+	DBEngine        string
+	CommitSHA       string // opsional (dari webhook)
+	CommitMsg       string
+	ProjectTypeHint string // ← baru
 }
 
 // AppService mengorkestrasi siklus hidup app (create, deploy, hapus).
@@ -242,14 +243,24 @@ func (s *AppService) Deploy(ctx context.Context, app *repository.App, opt Deploy
 		opt.TriggeredBy = "user"
 	}
 	d := &repository.Deployment{
-		AppID: app.ID, Status: string(constants.StatusPending),
-		TriggeredBy: opt.TriggeredBy, CommitSHA: opt.CommitSHA, CommitMsg: opt.CommitMsg,
+		AppID:           app.ID,
+		Status:          string(constants.StatusPending),
+		TriggeredBy:     opt.TriggeredBy,
+		CommitSHA:       opt.CommitSHA,
+		CommitMsg:       opt.CommitMsg,
+		ProjectTypeHint: opt.ProjectTypeHint,
 	}
 	if err := s.deploys.Create(ctx, d); err != nil {
 		return nil, fmt.Errorf("simpan deployment: %w", err)
 	}
 
-	job := DeployJob{AppID: app.ID, DeploymentID: d.ID, ZipPath: opt.ZipPath, DBEngine: opt.DBEngine}
+	job := DeployJob{
+		AppID:           app.ID,
+		DeploymentID:    d.ID,
+		ZipPath:         opt.ZipPath,
+		DBEngine:        opt.DBEngine,
+		ProjectTypeHint: opt.ProjectTypeHint, // ← baru
+	}
 	if err := s.queue.Enqueue(job); err != nil {
 		_ = s.deploys.Finish(ctx, d.ID, string(constants.StatusFailed), "", err.Error(), "")
 		return nil, err

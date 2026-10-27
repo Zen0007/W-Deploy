@@ -24,8 +24,8 @@ type BuildRequest struct {
 	LogChannel chan<- string     `json:"-"` // opsional: untuk streaming log
 }
 
-// BuildResult dikembalikan setelah build selesai.
-type BuildResult struct {
+// BuildMainResult dikembalikan setelah build selesai.
+type BuildMainResult struct {
 	ImageName string        `json:"image_name"`
 	Success   bool          `json:"success"`
 	Duration  time.Duration `json:"duration"`
@@ -50,7 +50,7 @@ func NewBuildService(defaultBuilder string) *BuildService {
 }
 
 // Build mengeksekusi `pack build` dan menangkap output secara real-time.
-func (s *BuildService) Build(ctx context.Context, req BuildRequest) (*BuildResult, error) {
+func (s *BuildService) Build(ctx context.Context, req BuildRequest) (*BuildMainResult, error) {
 	start := time.Now()
 
 	// 1. Validasi source path
@@ -117,7 +117,7 @@ func (s *BuildService) Build(ctx context.Context, req BuildRequest) (*BuildResul
 
 	logStr := logWriter.String()
 
-	result := &BuildResult{
+	result := &BuildMainResult{
 		ImageName: req.ImageName,
 		Duration:  duration,
 		Log:       logStr,
@@ -139,9 +139,9 @@ func (s *BuildService) Build(ctx context.Context, req BuildRequest) (*BuildResul
 // Berguna untuk SSE / WebSocket handler.
 func (s *BuildService) BuildWithStream(
 	ctx context.Context, req BuildRequest,
-) (<-chan string, <-chan *BuildResult, error) {
+) (<-chan string, <-chan *BuildMainResult, error) {
 	logCh := make(chan string, 100)
-	resultCh := make(chan *BuildResult, 1)
+	resultCh := make(chan *BuildMainResult, 1)
 	req.LogChannel = logCh
 
 	go func() {
@@ -150,7 +150,7 @@ func (s *BuildService) BuildWithStream(
 
 		result, err := s.Build(ctx, req)
 		if err != nil && result == nil {
-			result = &BuildResult{
+			result = &BuildMainResult{
 				ImageName: req.ImageName,
 				Success:   false,
 				Error:     err.Error(),

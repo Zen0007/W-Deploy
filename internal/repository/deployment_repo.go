@@ -84,3 +84,16 @@ func (r *DeploymentRepository) Finish(
 		"finished_at": now, "duration_sec": dur,
 	}).Error
 }
+// SetResolvedConfig menyimpan snapshot hasil resolusi (Phase 2).
+func (r *DeploymentRepository) SetResolvedConfig(
+	ctx context.Context, id uint,
+	projectType, configSource, configJSON string,
+) error {
+	return r.db.WithContext(ctx).Model(&Deployment{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"project_type":  projectType,
+			"config_source": configSource,
+			"config_json":   configJSON,
+		}).Error
+}

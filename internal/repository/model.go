@@ -66,6 +66,13 @@ type Deployment struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Diisi saat job dibuat (hint dari FE).
+	ProjectTypeHint string `gorm:"size:20" json:"project_type_hint,omitempty"`
+	// Diisi oleh worker setelah source tersedia.
+	ProjectType  string `gorm:"size:20" json:"project_type,omitempty"`
+	ConfigSource string `gorm:"size:20" json:"config_source,omitempty"`
+	ConfigJSON   string `gorm:"type:text" json:"config_json,omitempty"`
 }
 
 func (Deployment) TableName() string { return "deployments" }

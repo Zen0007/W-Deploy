@@ -165,27 +165,43 @@
     #deployProgress {
       transition: opacity .25s ease-out, transform .25s ease-out;
     }
+
     #deployProgress.dp-hidden {
       opacity: 0;
       transform: translateY(-6px);
       pointer-events: none;
     }
+
     .dp-step-line {
       transition: background-color .4s ease;
     }
+
     .dp-step-icon {
       transition: background-color .3s ease, border-color .3s ease;
     }
+
     @keyframes dp-spin {
-      to { transform: rotate(360deg); }
+      to {
+        transform: rotate(360deg);
+      }
     }
+
     .dp-spinning {
       animation: dp-spin .8s linear infinite;
     }
+
     @keyframes dp-log-in {
-      from { opacity: 0; transform: translateY(3px); }
-      to   { opacity: 1; transform: none; }
+      from {
+        opacity: 0;
+        transform: translateY(3px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
     }
+
     .dp-log-line {
       animation: dp-log-in .12s ease-out;
     }
@@ -412,8 +428,10 @@
             <!-- Header -->
             <div class="flex items-center justify-between border-b border-line px-5 py-3.5">
               <div class="flex items-center gap-2.5">
-                <svg id="dpHeaderIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-accent dp-spinning" aria-hidden="true">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                <svg id="dpHeaderIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                  class="h-4 w-4 text-accent dp-spinning" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
                 <div>
                   <p id="dpTitle" class="text-sm font-medium text-zinc-100">Deploying…</p>
@@ -423,7 +441,12 @@
               <div class="flex items-center gap-2">
                 <span id="dpElapsed" class="text-xs tabular-nums text-zinc-500"></span>
                 <button id="btnDpDismiss" type="button" class="icon-btn h-7 w-7" aria-label="Dismiss" title="Dismiss">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4"
+                    aria-hidden="true">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
                 </button>
               </div>
             </div>
@@ -440,9 +463,11 @@
               <div class="mt-3 rounded-lg bg-subtle border border-line overflow-hidden">
                 <div class="flex items-center justify-between px-3 py-1.5 border-b border-line">
                   <span class="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Live log</span>
-                  <button id="btnDpViewFull" type="button" class="text-[10px] text-accent hover:text-accent-hover transition-colors">View full log</button>
+                  <button id="btnDpViewFull" type="button"
+                    class="text-[10px] text-accent hover:text-accent-hover transition-colors">View full log</button>
                 </div>
-                <pre id="dpLog" class="h-28 overflow-y-auto p-3 font-mono text-[11px] leading-[1.6] text-zinc-400 whitespace-pre-wrap"></pre>
+                <pre id="dpLog"
+                  class="h-28 overflow-y-auto p-3 font-mono text-[11px] leading-[1.6] text-zinc-400 whitespace-pre-wrap"></pre>
               </div>
             </div>
           </div>
@@ -840,6 +865,33 @@
                 class="rounded bg-subtle px-1 py-0.5 text-[11px]">/srv/apps</code>.
             </p>
           </div>
+        </div>
+
+        <!-- Project type (optional, shared) -->
+        <div id="projTypeRow">
+          <label for="selProjectType" class="lbl">
+            Project type
+            <span class="ml-1 font-normal text-zinc-600">optional</span>
+          </label>
+          <div class="relative">
+            <select id="selProjectType" class="input appearance-none pr-8">
+              <option value="">Auto-detect</option>
+              <option value="static">Static (HTML/CSS/JS)</option>
+              <option value="spa">SPA (Vite/React/Vue)</option>
+              <option value="node">Node.js server</option>
+              <option value="custom">Custom (wdeploy.json)</option>
+            </select>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+              class="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+              aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+          <p class="mt-1.5 text-xs text-zinc-500">
+            Override auto-detect. Jika <code class="rounded bg-subtle px-1 py-0.5 text-[11px]">wdeploy.json</code> ada
+            di source, isinya dipakai lebih dulu.
+          </p>
         </div>
 
         <!-- Database configuration (shared, custom dropdown) -->
@@ -1561,10 +1613,10 @@
 
     // Definisi 4 tahapan pipeline
     const DP_STAGES = [
-      { id: 'source',    label: 'Source',    desc: 'Preparing source code' },
-      { id: 'building',  label: 'Build',     desc: 'Building container image' },
-      { id: 'deploying', label: 'Deploy',    desc: 'Starting container' },
-      { id: 'running',   label: 'Live',      desc: 'Ready to launch' },
+      { id: 'source', label: 'Source', desc: 'Preparing source code' },
+      { id: 'building', label: 'Build', desc: 'Building container image' },
+      { id: 'deploying', label: 'Deploy', desc: 'Starting container' },
+      { id: 'running', label: 'Live', desc: 'Ready to launch' },
     ];
 
     // ── Stepper renderer ──────────────────────────────────────────────────────────
@@ -1597,10 +1649,10 @@
         }
 
         const iconBg =
-          st === 'done'    ? 'bg-ok border-ok text-white'         :
-          st === 'active'  ? 'bg-accent border-accent text-white' :
-          st === 'failed'  ? 'bg-danger border-danger text-white' :
-                             'bg-subtle border-line text-zinc-500';
+          st === 'done' ? 'bg-ok border-ok text-white' :
+            st === 'active' ? 'bg-accent border-accent text-white' :
+              st === 'failed' ? 'bg-danger border-danger text-white' :
+                'bg-subtle border-line text-zinc-500';
 
         // Connector line
         const lineColor = (st === 'done' || finished || (i < activeIdx)) ? 'bg-ok' : 'bg-line';
@@ -1608,17 +1660,17 @@
         return '<li class="flex flex-1 flex-col items-center ' + (isLast ? '' : 'pr-2') + '">' +
           // Row: icon + line
           '<div class="flex w-full items-center">' +
-            '<div class="dp-step-icon flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ' + iconBg + '">' +
-              iconHTML +
-            '</div>' +
-            (!isLast ? '<div class="dp-step-line mx-1 h-0.5 flex-1 ' + lineColor + '"></div>' : '') +
+          '<div class="dp-step-icon flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ' + iconBg + '">' +
+          iconHTML +
+          '</div>' +
+          (!isLast ? '<div class="dp-step-line mx-1 h-0.5 flex-1 ' + lineColor + '"></div>' : '') +
           '</div>' +
           // Label below
           '<div class="mt-1.5 w-full pl-0.5 pr-1">' +
-            '<p class="text-[11px] font-medium ' + (st === 'active' ? 'text-accent' : st === 'done' ? 'text-ok' : st === 'failed' ? 'text-danger' : 'text-zinc-500') + '">' + s.label + '</p>' +
-            '<p class="text-[10px] text-zinc-600 leading-tight">' + s.desc + '</p>' +
+          '<p class="text-[11px] font-medium ' + (st === 'active' ? 'text-accent' : st === 'done' ? 'text-ok' : st === 'failed' ? 'text-danger' : 'text-zinc-500') + '">' + s.label + '</p>' +
+          '<p class="text-[10px] text-zinc-600 leading-tight">' + s.desc + '</p>' +
           '</div>' +
-        '</li>';
+          '</li>';
       }).join('');
     }
 
@@ -1661,10 +1713,10 @@
     }
 
     function _dpCleanup() {
-      if (_dp.ws) { try { _dp.ws.close(); } catch (_) {} _dp.ws = null; }
+      if (_dp.ws) { try { _dp.ws.close(); } catch (_) { } _dp.ws = null; }
       if (_dp.elapsedTimer) { clearInterval(_dp.elapsedTimer); _dp.elapsedTimer = null; }
-      if (_dp.autoDismiss)  { clearTimeout(_dp.autoDismiss);   _dp.autoDismiss  = null; }
-      if (_dp.pollTimer)    { clearInterval(_dp.pollTimer);    _dp.pollTimer    = null; }
+      if (_dp.autoDismiss) { clearTimeout(_dp.autoDismiss); _dp.autoDismiss = null; }
+      if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
       _dp.isRunning = false;
     }
 
@@ -1697,11 +1749,11 @@
       if (!_dp.isRunning && !_dp.appSlug) return;
       _dp.isRunning = false;
       if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
-      if (_dp.ws) { try { _dp.ws.close(); } catch (_) {} _dp.ws = null; }
+      if (_dp.ws) { try { _dp.ws.close(); } catch (_) { } _dp.ws = null; }
 
       _dpRenderSteps(3, false, true); // Semua step centang hijau ✅
       $('#dpTitle').textContent = _dp.appSlug + ' is live!';
-      $('#dpSub').textContent   = url ? '→ ' + url : 'Deployment complete';
+      $('#dpSub').textContent = url ? '→ ' + url : 'Deployment complete';
 
       const hi = $('#dpHeaderIcon');
       hi.classList.remove('dp-spinning');
@@ -1722,12 +1774,12 @@
       if (!_dp.isRunning && !_dp.appSlug) return;
       _dp.isRunning = false;
       if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
-      if (_dp.ws) { try { _dp.ws.close(); } catch (_) {} _dp.ws = null; }
+      if (_dp.ws) { try { _dp.ws.close(); } catch (_) { } _dp.ws = null; }
 
       const curIdx = _dpStageIndex(status || 'building');
       _dpRenderSteps(curIdx, true, false); // Step yang gagal jadi silang merah ❌
       $('#dpTitle').textContent = 'Deploy failed';
-      $('#dpSub').textContent   = errorMsg || 'An error occurred';
+      $('#dpSub').textContent = errorMsg || 'An error occurred';
 
       const hi = $('#dpHeaderIcon');
       hi.outerHTML = '<svg id="dpHeaderIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-danger" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
@@ -1772,9 +1824,9 @@
     // ── Main: start progress tracking for a deployed app ─────────────────────────
     function dpStart(appId, appSlug, deploymentId, sourceType) {
       _dpCleanup();
-      _dp.appId     = appId;
-      _dp.depId     = deploymentId;
-      _dp.appSlug   = appSlug;
+      _dp.appId = appId;
+      _dp.depId = deploymentId;
+      _dp.appSlug = appSlug;
       _dp.isRunning = true;
 
       // Deskripsi awal sesuai tipe source
@@ -1786,8 +1838,8 @@
       // Reset UI
       $('#dpLog').textContent = '';
       $('#dpElapsed').textContent = '';
-      $('#dpTitle').textContent   = 'Deploying ' + appSlug + '…';
-      $('#dpSub').textContent     = initialSub;
+      $('#dpTitle').textContent = 'Deploying ' + appSlug + '…';
+      $('#dpSub').textContent = initialSub;
 
       const headerIcon = $('#dpHeaderIcon');
       headerIcon.className = 'h-4 w-4 text-accent dp-spinning';
@@ -1818,16 +1870,32 @@
           _dpAppendLog(msg.line);
         } else if (msg.type === 'status') {
           const status = (msg.status || '').toLowerCase();
-          const idx    = _dpStageIndex(status);
+          const idx = _dpStageIndex(status);
           _dpRenderSteps(idx, false, false);
           $('#dpSub').textContent = DP_STAGES[Math.min(idx, DP_STAGES.length - 1)].desc;
 
           if (status === 'building') {
             $('#dpTitle').textContent = 'Building ' + appSlug + '…';
-            $('#dpSub').textContent   = 'Building container image with buildpacks';
+            $('#dpSub').textContent = 'Building container image with buildpacks';
           } else if (status === 'deploying') {
+            $('#dpTitle').textContent = 'Analyzing configuration…';
+            $('#dpSub').textContent = 'Starting container and health check';
+          }
+        } else if (msg.type === 'config_resolved') {
+          const pt = msg.project_type || 'unknown';
+          const src = msg.config_source || 'auto';
+          const srcLabel = ({
+            'wdeploy.json': 'wdeploy.json',
+            'fe': 'pilihan UI',
+            'auto': 'auto-detect',
+            'default': 'default',
+          })[src] || src;
+
+          _dpAppendLog('[config] ' + pt + ' (' + srcLabel + ')');
+
+          if (_dp.lastIdx === 0) {
             $('#dpTitle').textContent = 'Deploying ' + appSlug + '…';
-            $('#dpSub').textContent   = 'Starting container and health check';
+            $('#dpSub').textContent = 'Kategori: ' + pt + ' · ' + srcLabel;
           }
         } else if (msg.type === 'done') {
           _dpOnSuccess(msg.url, msg.duration);
@@ -1870,6 +1938,7 @@
       const localPath = $('#inpLocalPath').value.trim();
       const localFiles = $('#inpLocalFiles').files;
       const isUpload = localFiles.length > 0;
+      const projectType = ($('#selProjectType')?.value || '').trim();
 
       // Validasi
       if (isImp && !repoVal) {
@@ -1893,11 +1962,13 @@
       if (isImp) {
         // 1. GitHub
         payload = { source_type: 'github', repo_full_name: repoVal, branch: branch };
+        if (projectType) payload.project_type = projectType;
         headers['Content-Type'] = 'application/json';
       } else if (isUpload) {
         // 2. Upload Folder via FormData
         payload = new FormData();
         payload.append('source', 'upload');
+        if (projectType) payload.append('project_type', projectType);
         const folderName = localFiles[0].webkitRelativePath.split('/')[0];
         const slug = folderName.toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
@@ -1912,6 +1983,7 @@
       } else {
         // 3. Server Absolute Path
         payload = { source: 'local', path: localPath };
+        if (projectType) payload.project_type = projectType;
         headers['Content-Type'] = 'application/json';
       }
 
@@ -2007,12 +2079,15 @@
             line = msg.line;
           } else if (msg.type === 'status') {
             line = '── Status: ' + msg.status + ' ──';
+          } else if (msg.type === 'config_resolved') {
+            line = '── Config: type=' + (msg.project_type || '?') +
+              ' (source=' + (msg.config_source || '?') + ') ──';
           } else if (msg.type === 'done') {
             line = '── Deployment live: ' + (msg.url || '') + ' ──';
           } else if (msg.type === 'error') {
             line = '── Error: ' + (msg.error || '') + ' ──';
           }
-        } catch (_) {}
+        } catch (_) { }
         logBody.textContent += line + '\n';
         logBody.scrollTop = logBody.scrollHeight;
       };
@@ -2081,9 +2156,9 @@
         acts.push(['delete', 'Delete', false]);
         const nameHtml = c.url
           ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer" class="group/link inline-flex items-center gap-1.5 font-medium text-blue-400 hover:text-blue-300 hover:underline transition-colors" title="Buka ' + esc(c.url) + '">' +
-              esc(c.service) +
-              '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 shrink-0 opacity-80 group-hover/link:opacity-100 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
-            '</a>'
+          esc(c.service) +
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3 w-3 shrink-0 opacity-80 group-hover/link:opacity-100 group-hover/link:translate-x-0.5 group-hover/link:-translate-y-0.5 transition-transform"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+          '</a>'
           : '<p class="font-medium text-zinc-100">' + esc(c.service) + '</p>';
 
         return '<tr class="group h-12 border-b border-line transition-colors last:border-b-0 hover:bg-white/[0.02]">' +
@@ -2592,6 +2667,7 @@
           return '<option value="' + esc(x.name) + '"' + (x.name === repo ? ' selected' : '') + '>' + esc(x.name) + '</option>';
         }).join('');
       $('#inpBranch').value = r ? r.defaultBranch : 'main';
+      if ($('#selProjectType')) $('#selProjectType').value = '';
       dbVal = 'none';
       renderDbSelected();
       setDbOpen(false);

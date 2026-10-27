@@ -1,7 +1,12 @@
 package service
 
 import (
+	"W-dev/internal/projectconfig"
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log"
 	"sync"
 )
 
@@ -84,4 +89,28 @@ func trimCR(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// BuildByStrategy memilih dan menjalankan strategi build sesuai ProjectType.
+func (s *BuildService) BuildByStrategy(ctx context.Context, in BuildInput) (*BuildPlanResult, error) {
+	if in.Config == nil {
+		return nil, errors.New("BuildByStrategy: resolved config wajib ada")
+	}
+
+	var strategy BuildStrategy
+	switch in.Config.ProjectType {
+	case projectconfig.TypeStatic:
+		strategy = &StaticStrategy{}
+	case projectconfig.TypeSPA:
+		strategy = &SPAStrategy{}
+	case projectconfig.TypeNode:
+		strategy = &NodeStrategy{build: s}
+	case projectconfig.TypeCustom:
+		strategy = NewCustomStrategy(&NodeStrategy{build: s})
+	default:
+		return nil, fmt.Errorf("project type tidak didukung: %s", in.Config.ProjectType)
+	}
+
+	log.Printf("[build] strategy=%s image=%s", strategy.Name(), in.ImageName)
+	return strategy.Build(ctx, in)
 }

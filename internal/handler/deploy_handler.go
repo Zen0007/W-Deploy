@@ -88,6 +88,7 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 
 		req.Buildpack = r.FormValue("buildpack")
 		req.Database = r.FormValue("database")
+		req.ProjectType = strings.TrimSpace(r.FormValue("project_type"))
 		req.Port, _ = strconv.Atoi(r.FormValue("port"))
 		if raw := r.FormValue("env"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &req.Env); err != nil {
@@ -164,7 +165,10 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dep, err := h.apps.Deploy(r.Context(), app, service.DeployOptions{
-		TriggeredBy: "user", ZipPath: zipPath, DBEngine: req.Database,
+		TriggeredBy:     "user",
+		ZipPath:         zipPath,
+		DBEngine:        req.Database,
+		ProjectTypeHint: req.ProjectType,
 	})
 	if err != nil {
 		if zipPath != "" {

@@ -88,15 +88,60 @@ func (s *ContainerService) Run(ctx context.Context, spec RunSpec) (string, error
 	return resp.ID, nil
 }
 
-// Remove menghentikan lalu menghapus container berdasarkan nama/ID.
-func (s *ContainerService) Remove(ctx context.Context, nameOrID string) error {
-	if nameOrID == "" {
-		return nil
+// RunStaged menjalankan container baru dengan nama & alias sementara.
+// Container lama TIDAK disentuh — masih melayani traffic.
+//
+// Traefik label tetap dipasang (agar saat new ready, Traefik sudah tahu).
+// Traefik akan round-robin antara old & new selama keduanya up.
+func (c *ContainerService) RunStaged(
+	ctx context.Context, spec RunSpec, deploymentID uint,
+) (containerID, tempName string, err error) {
+	tempName = fmt.Sprintf("paas-app-%s-v%d", spec.Slug, deploymentID)
+
+	// bangun RunSpec dengan name temp + tetapi pakai port/labels dari spec alsinya
+	stagedSpec := spec
+	stagedSpec.Slug = tempName
+
+	// asumsi Run() meng-create dengan containerName = "paas-app-" + spec.Slug
+	// adjust jiak implementasi Run()
+	id, err := c.Run(ctx, stagedSpec)
+	if err != nil {
+		return "", "", fmt.Errorf("run staged container : %w", err)
 	}
-	timeout := 10
-	_, _ = s.docker.ContainerStop(ctx, nameOrID, client.ContainerStopOptions{Timeout: &timeout})
-	_, err := s.docker.ContainerRemove(ctx, nameOrID, client.ContainerRemoveOptions{Force: true})
-	return err
+
+	return id, tempName, nil
+}
+
+// WaitReadyContainer menunggu container dengan host/alias tertentu bisa diakses.
+// Dipakai untuk health check container baru sebelum di-promote.
+func (c *ContainerService) WaitReadyContainer(
+	ctx context.Context, host string, port int, timeout time.Duration,
+) error {
+	return c.WaitReady(ctx, host, port, timeout)
+}
+
+// Promote menghentikan & menghapus container lama, lalu me-rename container baru
+// menjadi nama kanonik (paas-app-<slug>). Return error bila rename gagal.
+func (c *ContainerService) Promote(
+	ctx context.Context, oldContainerID, newContainerID, finalName string,
+) error {
+	// 1. Stop & remove old
+	if oldContainerID != "" {
+		if err := c.Stop(ctx, oldContainerID, 15*time.Second); err != nil {
+			log.Printf("[container] promote: stop old (%s) warning: %v", oldContainerID[:12], err)
+		}
+		if err := c.Remove(ctx, oldContainerID); err != nil {
+			log.Printf("[container] promote: remove old (%s) warning: %v", oldContainerID[:12], err)
+		}
+	}
+
+	// 2. Rename new → finalName (docker rename preserves labels)
+	if err := c.Rename(ctx, newContainerID, finalName); err != nil {
+		return fmt.Errorf("promote: rename new container: %w", err)
+	}
+	log.Printf("[container] promoted %s → %s", newContainerID[:12], finalName)
+
+	return nil
 }
 
 // WaitReady mencoba koneksi TCP ke app (best-effort; hanya efektif jika backend berada di proxy-net).
@@ -143,4 +188,30 @@ func (s *ContainerService) StreamLogs(ctx context.Context, nameOrID string, tail
 		_, _ = stdcopy.StdCopy(pw, pw, res)
 	}()
 	return pr, nil
+}
+
+// Remove menghentikan lalu menghapus container berdasarkan nama/ID.
+func (s *ContainerService) Remove(ctx context.Context, nameOrID string) error {
+	if nameOrID == "" {
+		return nil
+	}
+	timeout := 10
+	_, _ = s.docker.ContainerStop(ctx, nameOrID, client.ContainerStopOptions{Timeout: &timeout})
+	_, err := s.docker.ContainerRemove(ctx, nameOrID, client.ContainerRemoveOptions{Force: true})
+	return err
+}
+
+func (s *ContainerService) Stop(ctx context.Context, id string, timeout time.Duration) error {
+	secs := int(timeout.Seconds())
+	_, err := s.docker.Client.ContainerStop(ctx, id, client.ContainerStopOptions{
+		Timeout: &secs,
+	})
+	return err
+}
+
+func (s *ContainerService) Rename(ctx context.Context, id, newName string) error {
+	_, err := s.docker.ContainerRename(ctx, id, client.ContainerRenameOptions{
+		NewName: newName,
+	})
+	return err
 }

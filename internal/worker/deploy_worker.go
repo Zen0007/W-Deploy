@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"W-dev/internal/constants"
+	"W-dev/internal/projectconfig"
 	"W-dev/internal/repository"
 	"W-dev/internal/service"
 )
@@ -98,7 +100,8 @@ func (r *run) emit(ev map[string]any) {
 func (r *run) logf(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
 	if r.logs.Len() < maxStoredLog {
-		r.logs.WriteString(line + "\n")
+		r.logs.WriteString(line)
+		r.logs.WriteString("\n")
 	}
 	r.emit(map[string]any{"type": "log", "line": line})
 }
@@ -181,9 +184,32 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 		_ = w.Deploys.SetCommit(ctx, r.dep, res.CommitSHA, res.CommitMsg)
 		r.logf("commit %s: %s", short(res.CommitSHA), res.CommitMsg)
 	}
+	// ─── Phase 2: resolve config ─────────────────────────────────────────
+	resolved, err := projectconfig.Resolve(srcDir, job.ProjectTypeHint)
+	if err != nil {
+		return "", fmt.Errorf("resolve project config: %w", err)
+	}
+	r.logf("==> Config: type=%s (source=%s)", resolved.ProjectType, resolved.ConfigSource)
 
+	// Simpan snapshot ke deployment (best-effort; jangan gagalkan deploy jika ini error).
+	if cfgBytes, jerr := json.Marshal(resolved); jerr == nil {
+		_ = w.Deploys.SetResolvedConfig(ctx, r.dep,
+			string(resolved.ProjectType),
+			string(resolved.ConfigSource),
+			string(cfgBytes),
+		)
+	}
+
+	// Emit ke FE.
+	r.emit(map[string]any{
+		"type":          "config_resolved",
+		"project_type":  string(resolved.ProjectType),
+		"config_source": string(resolved.ConfigSource),
+	})
+
+	// ─────────────────────────────────────────────────────────────────────
 	// Otomatis setup static web server jika project adalah web frontend tanpa server
-	prepareStaticProject(srcDir, app.Port, r.logf)
+	// prepareStaticProject(srcDir, app.Port, r.logf)
 
 	// 2. Database (opsional)
 	if job.DBEngine != "" {
@@ -210,9 +236,10 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 	}
 	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", app.Port))
 
-	// 4. Build
+	// ── 4. Build dengan strategy ────────────────────────────────
 	r.status(string(constants.StatusBuilding))
 	imageTag := fmt.Sprintf("paas/%s:%d", app.Slug, r.dep)
+
 	r.logf("==> Build image %s dengan buildpacks...", imageTag)
 
 	buildCtx, cancel := context.WithTimeout(ctx, constants.BuildTimeout)
@@ -227,54 +254,79 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 		}
 	}()
 
-	req := service.BuildRequest{
-		AppSlug: app.Slug, SourcePath: srcDir, ImageName: imageTag,
-		Env: buildEnv, LogChannel: logCh,
-	}
-	if app.Buildpack != "" {
-		req.Buildpacks = []string{app.Buildpack}
-	}
-	_, buildErr := w.Build.Build(buildCtx, req)
+	buildResult, buildErr := w.Build.BuildByStrategy(buildCtx, service.BuildInput{
+		SourcePath: srcDir,
+		AppSlug:    app.Slug,
+		ImageName:  imageTag,
+		Port:       app.Port,
+		BuildEnv:   buildEnv,
+		LogChannel: logCh,
+		Config:     resolved, // dari Phase 2
+	})
 	close(logCh)
 	<-done
-	if buildErr != nil {
+	if buildErr != nil || buildResult == nil || !buildResult.Success {
+		if buildResult != nil && buildResult.Error != "" {
+			return "", fmt.Errorf("build (%s): %s", buildResult.Strategy, buildResult.Error)
+		}
 		return "", buildErr
 	}
+	r.logf("==> Build selesai (strategy=%s, port=%d, %s)",
+		buildResult.Strategy, buildResult.RuntimePort, buildResult.Duration.Round(time.Second))
 
-	// 5. Run
+	// ── 5. Run staged container (old tetap hidup) ───────────────
 	_ = w.Apps.UpdateStatus(ctx, app.ID, string(constants.StatusDeploying), "")
 	r.status(string(constants.StatusDeploying))
-	r.logf("==> Menjalankan container...")
+	r.logf("==> Menjalankan container baru (staged)…")
+
+	// Simpan container ID lama untuk rollback & promote
+	oldContainerID := app.ContainerID
+	oldImage := app.ImageTag
 
 	runCtx, cancelRun := context.WithTimeout(ctx, constants.DeployTimeout)
 	defer cancelRun()
 
-	oldImage := app.ImageTag
-	containerID, err := w.Containers.Run(runCtx, service.RunSpec{
-		AppID: app.ID, Slug: app.Slug, Image: imageTag, Port: app.Port, Env: runEnv,
-	})
+	newContainerID, tempName, err := w.Containers.RunStaged(runCtx, service.RunSpec{
+		AppID: app.ID, Slug: app.Slug, Image: imageTag,
+		Port: buildResult.RuntimePort, Env: runEnv,
+	}, r.dep)
 	if err != nil {
 		return imageTag, err
 	}
-	if err := w.Apps.SetRuntime(ctx, app.ID, containerID, imageTag); err != nil {
+
+	// ── 6. Health check container baru ──────────────────────────
+	r.logf("==> Health check container %s…", tempName)
+	if err := w.Containers.WaitReadyContainer(runCtx, tempName, buildResult.RuntimePort, 45*time.Second); err != nil {
+		// ROLLBACK: container baru gagal → bersihkan, old tetap hidup
+		r.logf("health check gagal: %v — rollback (container lama tetap aktif)", err)
+		_ = w.Containers.Remove(runCtx, newContainerID)
+		return imageTag, fmt.Errorf("health check gagal: %w", err)
+	}
+	r.logf("container baru sehat")
+
+	// ── 7. Promote: swap old → new ──────────────────────────────
+	finalName := "paas-app-" + app.Slug
+	r.logf("==> Promote: swap %s → %s", short(oldContainerID), finalName)
+	if err := w.Containers.Promote(runCtx, oldContainerID, newContainerID, finalName); err != nil {
+		// Promote gagal di tengah jalan — laporkan tapi jangan matikan new
+		// (old sudah di-remove, new masih ada dengan nama temp)
+		return imageTag, fmt.Errorf("promote container: %w", err)
+	}
+
+	// Update DB setelah promote sukses
+	if err := w.Apps.SetRuntime(ctx, app.ID, newContainerID, imageTag); err != nil {
 		return imageTag, fmt.Errorf("simpan runtime: %w", err)
 	}
 	_ = w.Apps.UpdateStatus(ctx, app.ID, string(constants.StatusRunning), "")
 
-	// 6. Health check best-effort (hanya bermakna jika backend ada di proxy-net)
-	if err := w.Containers.WaitReady(runCtx, app.Slug, app.Port, 45*time.Second); err != nil {
-		r.logf("peringatan: %v", err)
-	} else {
-		r.logf("app merespon pada port %d", app.Port)
-	}
-
-	// 7. Bersihkan image lama
+	// ── 8. Cleanup image lama ───────────────────────────────────
 	if oldImage != "" && oldImage != imageTag {
 		if err := w.Build.RemoveImage(ctx, oldImage); err != nil {
-			log.Printf("[worker] hapus image lama: %v", err)
+			log.Printf("[worker] hapus image lama %v", err)
 		}
 	}
-	r.logf("==> Selesai: %s", w.Traefik.PublicURL(app.Slug))
+
+	r.logf("==> selesai : %s", w.Traefik.PublicURL(app.Slug))
 	return imageTag, nil
 }
 
