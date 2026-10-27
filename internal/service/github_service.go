@@ -170,7 +170,7 @@ func (s *GitHubService) ExchangeOAuthToken(ctx context.Context, code string) (*G
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "list repos"}
 	}
 
 	var tokenResp GitHubTokenResponse
@@ -252,7 +252,7 @@ func (s *GitHubService) FetchUserRepositories(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list repos HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "list repos"}
 	}
 
 	var repos []GitHubRepository
@@ -347,7 +347,7 @@ func (s *GitHubService) SetupAutoWebhook(
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("create webhook HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "list repos"}
 	}
 
 	var webhook GitHubWebhook
@@ -430,7 +430,7 @@ func (s *GitHubService) DeleteWebhook(
 
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete webhook HTTP %d: %s", resp.StatusCode, string(body))
+		return &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "list repos"}
 	}
 	return nil
 }
@@ -476,7 +476,7 @@ func (s *GitHubService) FetchUser(ctx context.Context, accessToken string) (*Git
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get user HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "list repos"}
 	}
 	var u GitHubUser
 	if err := json.Unmarshal(body, &u); err != nil {
@@ -502,4 +502,71 @@ func (s *GitHubService) VerifyWebhookSignature(body []byte, signatureHeader stri
 	m := hmac.New(sha256.New, []byte(s.webhookSecret))
 	m.Write(body)
 	return hmac.Equal(got, m.Sum(nil))
+}
+
+// GitHubAPIError mengembalikan status HTTP dari GitHub agar caller bisa
+// membedakan 401 (Bad credentials) dari error lain.
+type GitHubAPIError struct {
+	StatusCode int
+	Body       string
+	Operation  string
+}
+
+func (e *GitHubAPIError) Error() string {
+	return fmt.Sprintf("%s HTTP %d: %s", e.Operation, e.StatusCode, e.Body)
+}
+
+// ==== RefreshAccessToken ====
+//
+// GitHub OAuth refresh flow (hanya berlaku bila app punya refresh token,
+// umumnya saat "expiring user tokens" diaktifkan di GitHub App settings).
+// Endpoint: POST https://github.com/login/oauth/access_token
+// grant_type=refresh_token
+func (s *GitHubService) RefreshAccessToken(ctx context.Context, refreshToken string) (*GitHubTokenResponse, error) {
+	if refreshToken == "" {
+		return nil, fmt.Errorf("refresh token kosong")
+	}
+	payload := url.Values{
+		"client_id":     {s.clientID},
+		"client_secret": {s.clientSecret},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		GitHubOAuthBaseURL+"/access_token", strings.NewReader(payload.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "paas-backend/1.0")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &GitHubAPIError{StatusCode: resp.StatusCode, Body: string(body), Operation: "refresh token"}
+	}
+	var tok GitHubTokenResponse
+	if err := json.Unmarshal(body, &tok); err != nil {
+		return nil, err
+	}
+	if tok.Error != "" {
+		return nil, &GitHubAPIError{
+			StatusCode: http.StatusUnauthorized,
+			Body:       tok.Error + " — " + tok.ErrorDescription,
+			Operation:  "refresh token",
+		}
+	}
+	if tok.AccessToken == "" {
+		return nil, fmt.Errorf("access token kosong setelah refresh")
+	}
+	return &tok, nil
 }

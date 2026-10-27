@@ -164,8 +164,8 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "paas_refresh",
 		Value:    refreshToken,
-		Path:     "/api/auth/refresh", // Hanya dikirim ke endpoint refresh
-		Domain:   ".wdeploy.my.id",    // ← Wajib sama dengan Login
+		Path:     "/api/auth",      // Hanya dikirim ke endpoint refresh
+		Domain:   ".wdeploy.my.id", // ← Wajib sama dengan Login
 		MaxAge:   int(h.cfg.RefreshTokenTTL.Seconds()),
 		HttpOnly: true,
 		Secure:   h.cfg.IsProduction(),
@@ -186,8 +186,8 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Kapan access token (paas_session) akan expired
-	accessExpiresAt := time.Now().Add(h.cfg.SessionTTL).UTC().Format(time.RFC3339)
+	// ← Gunakan Exp aktual dari klaim access token (bukan now+TTL)
+	accessExpiresAt := time.Unix(claims.Exp, 0).UTC().Format(time.RFC3339)
 
 	// Baca refresh token dari cookie untuk mendapatkan expiry-nya
 	// (cookie HttpOnly, tidak bisa dibaca JS — jadi backend yang baca)
@@ -206,7 +206,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 			"login":              claims.Login,
 			"github_id":          claims.GitHubID,
 			"expires_at":         accessExpiresAt,
-			"refresh_expires_at": refreshExpiresAt, // ← baru
+			"refresh_expires_at": refreshExpiresAt,
 		})
 		return
 	}
@@ -220,7 +220,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		"github_scopes":       tok.Scope,
 		"github_connected_at": tok.CreatedAt.Format(time.RFC3339),
 		"expires_at":          accessExpiresAt,
-		"refresh_expires_at":  refreshExpiresAt, // ← baru
+		"refresh_expires_at":  refreshExpiresAt,
 	})
 }
 
@@ -249,8 +249,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "paas_refresh",
 		Value:    "",
-		Path:     "/api/auth/refresh", // Wajib sama dengan Path saat di-set
-		Domain:   ".wdeploy.my.id",    // Wajib sama dengan saat di-set
+		Path:     "/api/auth",      // Wajib sama dengan Path saat di-set
+		Domain:   ".wdeploy.my.id", // Wajib sama dengan saat di-set
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   h.cfg.IsProduction(),

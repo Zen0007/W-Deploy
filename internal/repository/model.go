@@ -123,10 +123,19 @@ type UserToken struct {
 	AvatarURL   string `gorm:"size:500"`
 	Name        string `gorm:"size:200"`
 	AccessToken string `gorm:"type:text;not null"`
-	TokenType   string `gorm:"size:20"`
-	Scope       string `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+
+	// OAuth token metadata (nilai dari respons GitHub)
+	TokenType string `gorm:"size:20"`
+	Scope     string `gorm:"type:text"`
+
+	// Refresh token & expiry — disimpan terenkripsi.
+	// Kosong bila GitHub tidak memberikan refresh token.
+	RefreshToken          string     `gorm:"type:text"`
+	TokenExpiresAt        *time.Time `gorm:"column:token_expires_at"`
+	RefreshTokenExpiresAt *time.Time `gorm:"column:refresh_token_expires_at"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func (UserToken) TableName() string { return "user_tokens" }

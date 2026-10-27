@@ -83,6 +83,49 @@ func (s *UploadService) ExtractZip(zipPath, dest string) error {
 	return nil
 }
 
+// ValidateArchive memeriksa metadata ZIP tanpa mengekstraknya.
+// Dipakai handler sebelum membuat job agar ZIP invalid ditolak lebih awal.
+//
+// Yang dicek:
+//   - ZIP bisa dibuka
+//   - Jumlah file tidak melebihi maxZipFiles
+//   - Total uncompressed size <= maxZipUncompressed
+func (s *UploadService) ValidateArchive(zipPath string) error {
+	zr, err := zip.OpenReader(zipPath)
+
+	if err != nil {
+		return fmt.Errorf("zip tidak valid %w", err)
+	}
+
+	defer zr.Close()
+
+	if len(zr.File) == 0 {
+		return errors.New("zip kosong")
+	}
+
+	if len(zr.File) > maxZipFiles {
+		return fmt.Errorf("zip berisi terlalu banya file (>%d) gunakan github saja", maxZipFiles)
+	}
+
+	var total uint64
+	for _, f := range zr.File {
+		// Syslink daibaikan oleh ExtractZip, jadi tidak di hitung ke limit
+		if f.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+
+		total += f.UncompressedSize64
+		if total > maxZipUncompressed {
+			return fmt.Errorf(
+				"ukuran hasi ekstrak melebihi batas %d Mib",
+				maxZipUncompressed>>20,
+			)
+		}
+	}
+
+	return nil
+}
+
 func writeZipFile(f *zip.File, target string) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err

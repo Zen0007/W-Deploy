@@ -1,14 +1,5 @@
 package tests
 
-// import (
-// 	"archive/zip"
-// 	"io"
-// 	"os"
-// 	"path/filepath"
-// 	"strings"
-// 	"testing"
-// )
-
 // func TestArchiveServerFolderCreatesZip(t *testing.T) {
 // 	root := t.TempDir()
 // 	source := filepath.Join(root, "my-app")

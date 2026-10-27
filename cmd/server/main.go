@@ -112,7 +112,7 @@ func main() {
 	handlers := router.Handlers{
 		Auth:    handler.NewAuthHandler(cfg, ghSvc, tokenSvc),
 		GitHub:  handler.NewGitHubHandler(ghSvc, tokenSvc),
-		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath),
+		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath,uploadSvc),
 		App:     handler.NewAppHandler(appSvc),
 		Webhook: handler.NewWebhookHandler(ghSvc, appSvc, appRepo),
 		WS:      handler.NewWSHandler(hub, appSvc, containerSvc, resourceSvc, cfg.CORSOrigins),

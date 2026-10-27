@@ -13,6 +13,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- ZIP library untuk packaging di browser -->
+  <!-- Produksi: vendor file ini ke web/vendor/fflate.min.js dan embed. -->
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
   <script>
     // Design tokens — single source of truth for the dashboard
     tailwind.config = {
@@ -1093,8 +1096,8 @@
 
     // Local UI state
     let connections = {
-      github: { connected: false, account: '', scopes: '', date: '' },
-      gitlab: { connected: false, account: '', scopes: '', date: '' }
+      github: { connected: false, account: '', scopes: '', date: '', needsReconnect: false },
+      gitlab: { connected: false, account: '', scopes: '', date: '', needsReconnect: false }
     };
     let env = 'Production';
     let ui = { confirm: null };
@@ -1144,67 +1147,84 @@
 
       let res = await fetch(fullURL, options);
 
-      // === INTERCEPTOR 401 (AUTO REFRESH) ===
-      if (res.status === 401 && !url.includes('/api/auth/refresh') && !url.includes('/api/auth/github')) {
-        if (!isRefreshing) {
-          isRefreshing = true;
-          try {
-            // Minta token baru
-            const refreshRes = await fetch(API_BASE + '/api/auth/refresh', {
-              method: 'POST',
-              credentials: 'include'
-            });
+      // === 401 handling ===
+      if (res.status === 401) {
+        // 1) Prioritas: error khusus GitHub perlu reconnect
+        let errBody = null;
+        try { errBody = await res.clone().json(); } catch (_) { }
+        if (errBody && errBody.error === 'GITHUB_REAUTH_REQUIRED') {
+          connections.github.connected = false;
+          connections.github.needsReconnect = true;
+          const err = new Error(errBody.message || 'GitHub reconnect required');
+          err.code = 'GITHUB_REAUTH_REQUIRED';
+          err.status = 401;
+          throw err;
+        }
 
-            if (refreshRes.ok) {
-              const data = await refreshRes.json();
-              if (data.token) {
-                sessionToken = data.token;
-                try { sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken); } catch (_) { }
-              }
-              isRefreshing = false;
-              onRefreshed(sessionToken);
-
-
-              // PENTING: Restart WebSocket agar menggunakan token baru
-              closeAllResourceWs();
-              startResourceMonitoring();
-
-              // Ulangi request sebelumnya
-              return await apiFetch(url, opts);
-            } else {
-              throw new Error('Refresh token expired');
-            }
-          } catch (e) {
-            // Refresh gagal (Refresh Token mati / user dihapus)
-            isRefreshing = false;
-            sessionToken = '';
-            try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) { }
-            closeAllResourceWs();
-            toast('danger', 'Session expired', 'Sesi Anda telah berakhir. Silakan login kembali.');
-            showLoginPrompt();
-
-
-            // PERBAIKAN: Tambahkan status 401 agar checkAuth tahu ini error unauthorized
-            const err = new Error('Unauthorized');
-            err.status = 401;
-            throw err;
-          }
-        } else {
-          // Jika sedang ada proses refresh, tunggu proses selesai lalu ulangi request
-          return new Promise(resolve => {
-            refreshSubscribers.push((newToken) => {
-              options.headers.set('Authorization', 'Bearer ' + newToken);
-              resolve(fetch(fullURL, options).then(r => {
-                if (!r.ok) {
-                  const err = new Error(r.statusText);
-                  err.status = r.status; // Sertakan status untuk error handling
-                  throw err;
+        // 2) 401 lainnya = session W-deploy → coba refresh session
+        if (!url.includes('/api/auth/refresh') && !url.includes('/api/auth/github')) {
+          if (!isRefreshing) {
+            isRefreshing = true;
+            try {
+              const refreshRes = await fetch(API_BASE + '/api/auth/refresh', {
+                method: 'POST',
+                credentials: 'include'
+              });
+              if (refreshRes.ok) {
+                const data = await refreshRes.json();
+                if (data.token) {
+                  sessionToken = data.token;
+                  try { sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken); } catch (_) { }
                 }
-                const ct = r.headers.get('Content-Type') || '';
-                return ct.includes('application/json') ? r.json() : r;
-              }));
+                isRefreshing = false;
+                onRefreshed(sessionToken);
+                closeAllResourceWs();
+                startResourceMonitoring();
+                return await apiFetch(url, opts);
+              } else {
+                throw new Error('Refresh token expired');
+              }
+            } catch (e) {
+              isRefreshing = false;
+              sessionToken = '';
+              try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) { }
+              closeAllResourceWs();
+              toast('danger', 'Session expired', 'Sesi Anda telah berakhir. Silakan login kembali.');
+              showLoginPrompt();
+              const err = new Error('Unauthorized');
+              err.status = 401;
+              throw err;
+            }
+          } else {
+            // Tunggu refresh yang sedang berjalan, lalu retry; tetap deteksi GITHUB_REAUTH_REQUIRED
+            return new Promise(resolve => {
+              refreshSubscribers.push((newToken) => {
+                options.headers.set('Authorization', 'Bearer ' + newToken);
+                resolve((async () => {
+                  const r = await fetch(fullURL, options);
+                  if (r.status === 401) {
+                    let body = null;
+                    try { body = await r.clone().json(); } catch (_) { }
+                    if (body && body.error === 'GITHUB_REAUTH_REQUIRED') {
+                      connections.github.connected = false;
+                      connections.github.needsReconnect = true;
+                      const err = new Error(body.message || 'GitHub reconnect required');
+                      err.code = 'GITHUB_REAUTH_REQUIRED';
+                      err.status = 401;
+                      throw err;
+                    }
+                  }
+                  if (!r.ok) {
+                    const err = new Error(r.statusText || ('HTTP ' + r.status));
+                    err.status = r.status;
+                    throw err;
+                  }
+                  const ct = r.headers.get('Content-Type') || '';
+                  return ct.includes('application/json') ? r.json() : r;
+                })());
+              });
             });
-          });
+          }
         }
       }
 
@@ -1450,6 +1470,14 @@
     async function fetchRepos() {
       try {
         const data = await apiFetch('/api/github/repos');
+
+        // Sukses → bersihkan state reconnect (mungkin dipulihkan backend via refresh token)
+        if (connections.github.needsReconnect) {
+          connections.github.needsReconnect = false;
+          if (!connections.github.connected) connections.github.connected = true;
+          if (current === 'integrations') renderProviderCards();
+        }
+
         REPOS = (Array.isArray(data) ? data : []).map(function (r) {
           return {
             name: r.full_name || r.name,
@@ -1461,13 +1489,18 @@
           };
         });
         renderRepoList();
-        $('#repoCount').textContent = REPOS.length + ' repositories';
         console.log('[repos] loaded', REPOS.length);
       } catch (err) {
+        if (err.code === 'GITHUB_REAUTH_REQUIRED') {
+          toast('danger', 'GitHub reconnect required', err.message);
+          if (current === 'integrations') renderProviderCards();
+          return;
+        }
         console.error('[repos] fetch error', err.status, err.message);
         toast('danger', 'Repos error', err.message);
       }
     }
+
     function langColor(lang) {
       const MAP = {
         TypeScript: '#3178C6', JavaScript: '#F7DF1E', Go: '#00ADD8', Python: '#3572A5',
@@ -1594,6 +1627,95 @@
         console.error('[deploys] fetch error:', err);
         toast('danger', 'Deploys error', err.message);
       }
+    }
+
+    // ─── Client-side ZIP packaging ─────────────────────────────────────────
+    // Filter path relatif root project, buang artefak build & dependency.
+    // Ini mengurangi ukuran upload dan mencegah buildpack salah deteksi.
+    const ZIP_SKIP_PATTERNS = [
+      /(^|\/)node_modules(\/|$)/,
+      /(^|\/)\.git(\/|$)/,
+      /(^|\/)\.vite(\/|$)/,
+      /(^|\/)\.next(\/|$)/,
+      /(^|\/)\.nuxt(\/|$)/,
+      /(^|\/)\.cache(\/|$)/,
+      /(^|\/)coverage(\/|$)/,
+      /(^|\/)__MACOSX(\/|$)/,
+      /(^|\/)dist(\/|$)/,
+      /(^|\/)build(\/|$)/,
+      /(^|\/)out(\/|$)/,
+      /(^|\/)\.DS_Store$/,
+      /(^|\/)\.env($|\.)/,
+      /\.log$/,
+    ];
+
+    function shouldSkipPath(p) {
+      return ZIP_SKIP_PATTERNS.some(function (re) { return re.test(p); });
+    }
+
+    // detectCommonRoot: jika SEMUA file ada di bawah satu folder root
+    // (mis. "my-app/src/a.js" dan "my-app/package.json"), return "my-app/".
+    // Return "" jika tidak ada root yang sama.
+    function detectCommonRoot(paths) {
+      if (paths.length === 0) return '';
+      const firstSeg = paths[0].split('/')[0];
+      if (!firstSeg || paths[0].indexOf('/') === -1) return '';
+      const prefix = firstSeg + '/';
+      for (let i = 0; i < paths.length; i++) {
+        if (paths[i].indexOf(prefix) !== 0) return '';
+      }
+      return prefix;
+    }
+
+    // buildProjectZip membangun ZIP dengan path relatif dari root project.
+    // onProgress(done, total) dipanggil tiap file selesai dibaca.
+    async function buildProjectZip(files, onProgress) {
+      if (!window.fflate || !window.fflate.zip) {
+        throw new Error('ZIP library (fflate) belum dimuat');
+      }
+      if (!files || files.length === 0) {
+        throw new Error('Folder kosong');
+      }
+
+      // 1. Filter
+      const filtered = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const rel = f.webkitRelativePath || f.name;
+        if (!rel) continue;
+        if (shouldSkipPath(rel)) continue;
+        filtered.push({ file: f, path: rel });
+      }
+      if (filtered.length === 0) {
+        throw new Error('Tidak ada file tersisa setelah filter (semua ada di node_modules/.git/dist, dsb.)');
+      }
+
+      // 2. Strip common root folder agar paths di dalam ZIP bersih.
+      const rootPrefix = detectCommonRoot(filtered.map(function (x) { return x.path; }));
+
+      // 3. Baca semua file → Uint8Array
+      const entries = {};
+      let done = 0;
+      for (let i = 0; i < filtered.length; i++) {
+        const item = filtered[i];
+        const key = rootPrefix ? item.path.slice(rootPrefix.length) : item.path;
+        try {
+          const buf = await item.file.arrayBuffer();
+          entries[key] = new Uint8Array(buf);
+        } catch (e) {
+          throw new Error('Gagal membaca "' + key + '": ' + e.message);
+        }
+        done++;
+        if (onProgress) onProgress(done, filtered.length);
+      }
+
+      // 4. Build ZIP
+      return await new Promise(function (resolve, reject) {
+        window.fflate.zip(entries, { level: 6 }, function (err, data) {
+          if (err) return reject(new Error('ZIP gagal: ' + err.message));
+          resolve(data); // Uint8Array
+        });
+      });
     }
 
     // ─── Deploy Progress Panel ────────────────────────────────────────────────────
@@ -1965,21 +2087,39 @@
         if (projectType) payload.project_type = projectType;
         headers['Content-Type'] = 'application/json';
       } else if (isUpload) {
-        // 2. Upload Folder via FormData
-        payload = new FormData();
-        payload.append('source', 'upload');
-        if (projectType) payload.append('project_type', projectType);
-        const folderName = localFiles[0].webkitRelativePath.split('/')[0];
-        const slug = folderName.toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-|-$/g, '') || 'uploaded-app';
-        payload.append('name', folderName);
-        payload.append('slug', slug);
-        // Masukkan semua file beserta path relatifnya (folder structure)
-        for (let i = 0; i < localFiles.length; i++) {
-          payload.append('files', localFiles[i], localFiles[i].webkitRelativePath);
+        // 2. Upload Folder → bangun ZIP di browser, kirim sebagai field 'archive'
+        $('#deployLabel').textContent = 'Packaging…';
+        try {
+          const zipBytes = await buildProjectZip(localFiles, function (done, total) {
+            $('#deployLabel').textContent = 'Packaging ' + done + '/' + total;
+          });
+
+          const folderName = localFiles[0].webkitRelativePath.split('/')[0] || 'app';
+          const slug = folderName.toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '') || 'uploaded-app';
+
+          payload = new FormData();
+          payload.append('source', 'upload');
+          if (projectType) payload.append('project_type', projectType);
+          payload.append('name', folderName);
+          payload.append('slug', slug);
+          // Single file, bukan banyak field 'files'
+          payload.append(
+            'archive',
+            new Blob([zipBytes], { type: 'application/zip' }),
+            slug + '.zip'
+          );
+        } catch (e) {
+          console.error('[deploy] packaging failed:', e);
+          toast('danger', 'Packaging failed', e.message);
+          $('#btnDeploy').disabled = false;
+          $('#btnDeployCancel').disabled = false;
+          $('#btnDeployX').disabled = false;
+          $('#deploySpin').classList.add('hidden');
+          $('#deployLabel').textContent = 'Deploy';
+          return;
         }
-        // headers Content-Type dibiarkan kosong, browser akan mengaturnya (multipart/form-data)
       } else {
         // 3. Server Absolute Path
         payload = { source: 'local', path: localPath };
@@ -2300,6 +2440,7 @@
         '<button type="button" data-confirm-disconnect="' + p + '" class="rounded-lg bg-danger px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-red-600">Disconnect</button>' +
         '</div></div>';
     }
+
     function providerCard(p) {
       const conn = connections[p];
       const name = providerName(p);
@@ -2307,12 +2448,20 @@
       const sub = p === 'github'
         ? 'Import repositories from github.com and deploy on every push.'
         : 'Connect gitlab.com to import projects and mirror pipelines.';
-      const badge = conn.connected
-        ? '<span class="badge text-emerald-400"><span class="badge-dot bg-emerald-400"></span>Connected</span>'
-        : '<span class="badge text-zinc-400"><span class="badge-dot bg-zinc-500"></span>Not connected</span>';
-      let body;
-      if (conn.connected) {
-        body = '<dl class="mt-4 grid grid-cols-[72px_1fr] items-baseline gap-y-1.5 text-xs">' +
+
+      let badge, body;
+
+      if (conn.needsReconnect) {
+        badge = '<span class="badge text-red-400"><span class="badge-dot bg-red-400"></span>Reconnect required</span>';
+        body =
+          '<div class="mt-4 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2.5 text-xs text-red-300">' +
+          'Otorisasi ' + name + ' sudah kedaluwarsa. Hubungkan ulang untuk melanjutkan sinkronisasi repo & deploy.' +
+          '</div>' +
+          '<div class="mt-4"><button type="button" data-connect="' + p + '" class="btn-primary">Reconnect ' + name + '</button></div>';
+      } else if (conn.connected) {
+        badge = '<span class="badge text-emerald-400"><span class="badge-dot bg-emerald-400"></span>Connected</span>';
+        body =
+          '<dl class="mt-4 grid grid-cols-[72px_1fr] items-baseline gap-y-1.5 text-xs">' +
           '<dt class="text-zinc-500">Account</dt><dd class="font-mono text-zinc-200">' + esc(conn.account) + '</dd>' +
           '<dt class="text-zinc-500">Scopes</dt><dd class="break-words font-mono text-zinc-200">' + esc(conn.scopes) + '</dd>' +
           '<dt class="text-zinc-500">Connected</dt><dd class="text-zinc-200">' + esc(conn.date) + '</dd>' +
@@ -2322,16 +2471,20 @@
           '<button type="button" data-disconnect="' + p + '" class="btn-danger">Disconnect</button>' +
           '</div>' + (ui.confirm === p ? confirmBox(p) : '');
       } else {
+        badge = '<span class="badge text-zinc-400"><span class="badge-dot bg-zinc-500"></span>Not connected</span>';
         body = '<div class="mt-4"><button type="button" data-connect="' + p + '" class="btn-primary">Connect ' + name + '</button></div>';
       }
+
       return '<article class="card p-5">' +
         '<div class="flex items-start justify-between gap-3">' +
         '<div class="flex items-center gap-3">' +
         '<span class="text-zinc-100">' + providerLogo(p, 'h-6 w-6') + '</span>' +
-        '<div><h3 class="text-sm font-medium text-zinc-100">' + name + '</h3><p class="mt-0.5 text-xs text-zinc-400">' + sub + '</p></div>' +
+        '<div><h3 class="text-sm font-medium text-zinc-100">' + name + '</h3>' +
+        '<p class="mt-0.5 text-xs text-zinc-400">' + sub + '</p></div>' +
         '</div>' + badge +
         '</div>' + body + '</article>';
     }
+
     function renderProviderCards() {
       $('#providerCards').innerHTML = providerCard('github') + providerCard('gitlab');
     }
@@ -2417,7 +2570,13 @@
       const picked = $$('#oauthScopes input:checked').map(function (i) { return i.dataset.scope; });
       if (!picked.length) return;
       if (oauthMode === 'connect') {
-        connections[oauthP] = { connected: true, account: '@acme-org', scopes: picked.join(', '), date: fmtDateTime(MOCK_NOW) };
+        connections[oauthP] = {
+          connected: true,
+          account: '@acme-org',
+          scopes: picked.join(', '),
+          date: fmtDateTime(MOCK_NOW),
+          needsReconnect: false
+        };
         toast('success', providerName(oauthP) + ' connected', 'Repositories are now being synced.');
       } else {
         connections[oauthP].scopes = picked.join(', ');

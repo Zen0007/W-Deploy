@@ -35,10 +35,11 @@ const maxZipUpload = 200 << 20 // 200 MiB
 type DeployHandler struct {
 	apps      *service.AppService
 	workspace string
+	Uploads   *service.UploadService
 }
 
-func NewDeployHandler(apps *service.AppService, workspace string) *DeployHandler {
-	return &DeployHandler{apps: apps, workspace: workspace}
+func NewDeployHandler(apps *service.AppService, workspace string, upload *service.UploadService) *DeployHandler {
+	return &DeployHandler{apps: apps, workspace: workspace, Uploads: upload}
 }
 
 // Deploy: POST /api/deploy
@@ -53,6 +54,12 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	)
 
 	ct := r.Header.Get("Content-Type")
+
+	archiveFiles := r.MultipartForm.File["archive"]
+	folderFiles := r.MultipartForm.File["files"]
+	hasArchive := len(archiveFiles) > 0
+	hasFolder := len(folderFiles) > 0
+
 	switch {
 	case strings.HasPrefix(ct, "multipart/form-data"):
 		r.Body = http.MaxBytesReader(w, r.Body, maxZipUpload+1<<20)
@@ -64,12 +71,29 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 		// Frontend mengirim source="upload"
 		req.SourceType = string(constants.SourceZip) // Tetap gunakan tipe Zip agar service layer tidak perlu diubah
 
-		// Ambil nama folder dari file pertama sebagai default name & slug
-		files := r.MultipartForm.File["files"]
+		if !hasArchive && !hasFolder {
+			writeError(w, http.StatusBadRequest, "wajib ada field 'archive' (ZIP) atau 'files'")
+			return
+		}
+		if hasArchive && hasFolder {
+			writeError(w, http.StatusBadRequest,
+				"kirim salah satu: 'archive' ATAU 'files', bukan keduanya")
+			return
+		}
+		if hasArchive && len(archiveFiles) > 1 {
+			writeError(w, http.StatusBadRequest, "field 'archive' hanya boleh satu file")
+			return
+		}
+		// Default name & slug
 		defaultName := "uploaded-app"
-		if len(files) > 0 {
-			// fileHeader.Filename biasanya berformat "nama-folder/path/ke/file.go"
-			parts := strings.Split(files[0].Filename, "/")
+		if hasArchive {
+			n := strings.TrimSuffix(archiveFiles[0].Filename, ".zip")
+			n = strings.TrimSuffix(n, ".ZIP")
+			if n != "" {
+				defaultName = n
+			}
+		} else if hasFolder {
+			parts := strings.Split(folderFiles[0].Filename, "/")
 			if len(parts) > 0 && parts[0] != "" {
 				defaultName = parts[0]
 			}
@@ -79,11 +103,9 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 		if req.Name == "" {
 			req.Name = defaultName
 		}
-
 		req.Slug = r.FormValue("slug")
 		if req.Slug == "" {
-			// Jika frontend tidak mengirim slug, buat sederhana dari nama folder
-			req.Slug = strings.ToLower(strings.ReplaceAll(defaultName, " ", "-"))
+			req.Slug = util.Slugify(defaultName)
 		}
 
 		req.Buildpack = r.FormValue("buildpack")
@@ -156,7 +178,13 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if app.SourceType == string(constants.SourceZip) && zipPath == "" {
-		path, err := h.saveFolderAsZip(r, app.Slug)
+		var path string
+		var err error
+		if hasArchive {
+			path, err = h.saveUploadedArchive(r, app.Slug)
+		} else {
+			path, err = h.saveFolderAsZip(r, app.Slug) // legacy fallback
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -370,4 +398,91 @@ func validEngine(e string) bool {
 		return true
 	}
 	return false
+}
+
+// saveUploadedArchive menyimpan file dari field multipart "archive" ke
+// workspace/uploads, lalu memvalidasi metadata ZIP sebelum dikembalikan.
+func (h *DeployHandler) saveUploadedArchive(r *http.Request, slug string) (string, error) {
+	fhs := r.MultipartForm.File["archive"]
+	if len(fhs) == 0 {
+		return "", errors.New("field 'archinve' tidak di temukan")
+	}
+	if len(fhs) > 1 {
+		return "", errors.New("hanya satu file di field 'archive' yang diizinkan")
+	}
+
+	fh := fhs[0]
+
+	// Batas ukuran di MultipartReader sudah dipasang lewat MaxBytesReader,
+	// tapi validasi ini menjaga jika header Content-Length dipalsukan.
+	if fh.Size > maxZipUpload {
+		return "", fmt.Errorf("archive melebihi batas %d Mib", maxZipUpload>>20)
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		return "", fmt.Errorf("gagal membuka archive: %w", err)
+	}
+	defer src.Close()
+
+	// Validasi magic number ZIP.
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(src, magic); err != nil {
+		return "", fmt.Errorf("gagal membaca header archive: %w", err)
+	}
+	if magic[0] != 'P' || magic[1] != 'K' {
+		return "", errors.New("file bukan ZIP yang valid (magic number tidak cocok)")
+	}
+
+	// ZIP lokal (PK\x03\x04) atau empty archive (PK\x05\x06) diterima.
+	if !((magic[2] == 0x03 && magic[3] == 0x04) ||
+		(magic[2] == 0x05 && magic[3] == 0x06)) {
+		return "", errors.New("file bukan ZIP yang valid (header PK tidak cocok)")
+	}
+	if seeker, ok := src.(io.Seeker); ok {
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return "", fmt.Errorf("gagal rewind archive: %w", err)
+		}
+	} else {
+		return "", errors.New("stream archive tidak bisa di-rewind")
+	}
+
+	dir := filepath.Join(h.workspace, "uploads")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("gagal membuat folder upload: %w", err)
+	}
+
+	dst := filepath.Join(dir, fmt.Sprintf("%s-%d.zip", slug, time.Now().UnixNano()))
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", errors.New("gagal membuat file archive")
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.Remove(dst)
+		}
+	}()
+
+	n, err := io.Copy(out, io.LimitReader(src, maxZipUpload+1))
+	if closeErr := out.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", fmt.Errorf("gagal menyimpan archive: %w", err)
+	}
+
+	if n > maxZipUpload {
+		return "", fmt.Errorf("archive melebihi batas %d MiB", maxZipUpload>>20)
+	}
+
+	// Validasi metadata ZIP lebih awal (lebih baik gagal di sini daripada di worker).
+	if h.Uploads != nil {
+		if err := h.Uploads.ValidateArchive(dst); err != nil {
+			return "", err
+		}
+	}
+
+	ok = true
+	return dst, nil
 }
