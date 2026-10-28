@@ -32,7 +32,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-net"
-      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || Host(`api.${MAIN_DOMAIN}`) || HostRegexp(`{subdomain:[a-z0-9-]+}.${MAIN_DOMAIN}`)"
+      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || Host(`api.${MAIN_DOMAIN}`) || HostRegexp(`${MAIN_DOMAIN_REGEX}`)"
       - "traefik.http.routers.paas-web.entrypoints=web"
       - "traefik.http.services.paas-web.loadbalancer.server.port=8080"
 

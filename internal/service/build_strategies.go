@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,7 @@ func (s *StaticStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanRe
 	start := time.Now()
 
 	if !hasAnyHTML(in.SourcePath) {
-		return nil, errors.New("static strategry :tidak ada file .html di source")
+		return nil, errors.New("static strategy: tidak ada file .html di source")
 	}
 
 	nginxCfg := renderStaticNginx(in.Port)
@@ -34,16 +35,24 @@ func (s *StaticStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanRe
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return nil, err
 	}
-
 	defer os.RemoveAll(tmpDir)
 
-	dfPath := filepath.Join(tmpDir, "Dockerffile")
+	dfPath := filepath.Join(tmpDir, "Dockerfile")
 	cfPath := filepath.Join(tmpDir, "nginx.conf")
-	_ = os.WriteFile(dfPath, []byte(dockerfile), 0o644)
-	_ = os.WriteFile(cfPath, []byte(nginxCfg), 0o644)
+	if err := os.WriteFile(dfPath, []byte(dockerfile), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis Dockerfile: %w", err)
+	}
+	if err := os.WriteFile(cfPath, []byte(nginxCfg), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis nginx.conf: %w", err)
+	}
 
-	// Dockerfile menggunakan source langsung - .paas-build di-ignore via .dockerignore
-	_ = os.WriteFile(filepath.Join(in.SourcePath, ".dockerignore"), []byte(".paas-build\n"), 0o644)
+	// .dockerignore: abaikan .git saja. .paas-build HARUS tetap ada di
+	// context agar Dockerfile bisa di-COPY (failing build sebelumnya:
+	// .paas-build di-ignore, sehingga COPY .paas-build/nginx.conf gagal).
+	if err := os.WriteFile(filepath.Join(in.SourcePath, ".dockerignore"),
+		[]byte(".git\n"), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis .dockerignore: %w", err)
+	}
 
 	if err := dockerBuild(ctx, in, dfPath, in.LogChannel); err != nil {
 		return &BuildPlanResult{
@@ -91,10 +100,16 @@ func (s *SPAStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanResul
 
 	dfPath := filepath.Join(tmpDir, "Dockerfile")
 	cfPath := filepath.Join(tmpDir, "nginx.conf")
-	_ = os.WriteFile(dfPath, []byte(dockerfile), 0o644)
-	_ = os.WriteFile(cfPath, []byte(nginxConf), 0o644)
-	_ = os.WriteFile(filepath.Join(in.SourcePath, ".dockerignore"), []byte(
-		".paas-build\nnode_modules\n.git\n"), 0o644)
+	if err := os.WriteFile(dfPath, []byte(dockerfile), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis Dockerfile: %w", err)
+	}
+	if err := os.WriteFile(cfPath, []byte(nginxConf), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis nginx.conf: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(in.SourcePath, ".dockerignore"),
+		[]byte("node_modules\n.git\n"), 0o644); err != nil {
+		return nil, fmt.Errorf("tulis .dockerignore: %w", err)
+	}
 
 	if err := dockerBuild(ctx, in, dfPath, in.LogChannel); err != nil {
 		return &BuildPlanResult{
@@ -133,12 +148,19 @@ func (s *NodeStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanResu
 		Env:        in.BuildEnv,
 		LogChannel: in.LogChannel,
 	})
+
+	// res bisa nil saat error — jangan panik.
+	var d time.Duration
+	if res != nil {
+		d = res.Duration
+	}
+
 	if err != nil {
 		return &BuildPlanResult{
 			ImageName:   in.ImageName,
 			RuntimePort: in.Port,
 			Success:     false,
-			Duration:    res.Duration,
+			Duration:    d,
 			Strategy:    s.Name(),
 			Error:       err.Error(),
 		}, err
@@ -148,7 +170,7 @@ func (s *NodeStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanResu
 		ImageName:   in.ImageName,
 		RuntimePort: in.Port,
 		Success:     true,
-		Duration:    res.Duration,
+		Duration:    d,
 		Strategy:    s.Name(),
 	}, nil
 }
@@ -168,12 +190,20 @@ func (s *CustomStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanRe
 	start := time.Now()
 
 	userDockerfile := filepath.Join(in.SourcePath, "Dockerfile")
-	if _, err := os.Stat(userDockerfile); err != nil {
-		// Validasi: Dockerfile harus di dalam source path
-		abs, _ := filepath.Abs(userDockerfile)
-		srcAbs, _ := filepath.Abs(in.SourcePath)
-		if !strings.HasPrefix(abs, srcAbs) {
-			return nil, errors.New("Dockerfile di luar source path (indikasi path traversal)")
+	if _, err := os.Stat(userDockerfile); err == nil {
+		// Validasi: Dockerfile harus di dalam source path.
+		// Path dibangun dari filepath.Join jadi traversal literal tidak mungkin;
+		// yang perlu dicek adalah symlink yang mengarah keluar source.
+		real, err := filepath.EvalSymlinks(userDockerfile)
+		if err != nil {
+			return nil, fmt.Errorf("resolve Dockerfile: %w", err)
+		}
+		srcReal, err := filepath.EvalSymlinks(in.SourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve source path: %w", err)
+		}
+		if !strings.HasPrefix(real, srcReal+string(os.PathSeparator)) {
+			return nil, errors.New("Dockerfile berada di luar source path")
 		}
 
 		if err := dockerBuild(ctx, in, userDockerfile, in.LogChannel); err != nil {
@@ -193,6 +223,7 @@ func (s *CustomStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanRe
 			Strategy:    s.Name(),
 		}, nil
 	}
+
 	// Tidak ada Dockerfile — fallback ke Node/Pack.
 	if in.LogChannel != nil {
 		in.LogChannel <- "custom: Dockerfile tidak ditemukan, fallback ke Buildpacks"
@@ -206,8 +237,21 @@ func (s *CustomStrategy) Build(ctx context.Context, in BuildInput) (*BuildPlanRe
 // ═══════════════════════════════════════════════════════════════
 
 func hasAnyHTML(dir string) bool {
-	matches, _ := filepath.Glob(filepath.Join(dir, "*.html"))
-	return len(matches) > 0
+	found := false
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules") {
+			return fs.SkipDir
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".html") {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 type frontendCfg struct {
@@ -312,19 +356,20 @@ func renderStaticDockerfile(port int) string {
 # Config
 COPY .paas-build/nginx.conf /etc/nginx/conf.d/default.conf
 
-# Source: seluruh folder (tanpa .paas-build karena .dockerignore)
+# Source: seluruh folder (tanpa .git karena .dockerignore)
 WORKDIR /usr/share/nginx/html
 COPY . .
 
-# Pastikan ada index.html (auto-alias jika hanya ada .html lain)
-RUN if [ ! -f index.html ]; then \
-      first_html=$$(ls *.html 2>/dev/null | head -n1); \
-      if [ -n "$$first_html" ]; then cp "$$first_html" index.html; fi; \
+# Bersihkan artefak build & pastikan ada index.html.
+RUN rm -rf .paas-build .dockerignore \
+ && if [ ! -f index.html ]; then \
+      first_html=$(find . -maxdepth 3 -name '*.html' -type f 2>/dev/null | head -n1); \
+      if [ -n "$first_html" ]; then cp "$first_html" index.html; fi; \
     fi
 
 EXPOSE %d
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-  CMD wget -q --spider http://localhost:%d/ || exit 1
+  CMD wget -q --spider http://127.0.0.1:%d/ || exit 1
 CMD ["nginx", "-g", "daemon off;"]
 `, port, port)
 }
@@ -334,10 +379,14 @@ func renderSPADockerfile(cfg *frontendCfg, port int, envLines string) string {
 	if cfg.LockFile != "" {
 		lockCopy = "COPY " + cfg.LockFile + " ./\n"
 	}
+	corepack := ""
+	if cfg.LockFile == "pnpm-lock.yaml" {
+		corepack = "RUN corepack enable\n"
+	}
 	return fmt.Sprintf(`# ── Stage 1: build ──
 FROM node:20-alpine AS builder
 WORKDIR /app
-
+%s
 COPY package*.json ./
 %sRUN %s
 
@@ -353,9 +402,9 @@ COPY --from=builder /app/%s /usr/share/nginx/html
 
 EXPOSE %d
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-  CMD wget -q --spider http://localhost:%d/ || exit 1
+  CMD wget -q --spider http://127.0.0.1:%d/ || exit 1
 CMD ["nginx", "-g", "daemon off;"]
-`, lockCopy, cfg.InstallCmd, envLines, cfg.BuildCmd, cfg.OutputDir, port, port)
+`, corepack, lockCopy, cfg.InstallCmd, envLines, cfg.BuildCmd, cfg.OutputDir, port, port)
 }
 
 func renderStaticNginx(port int) string {
@@ -393,12 +442,21 @@ func dockerBuild(ctx context.Context, in BuildInput, dockerfilePath string, logC
 	)
 	cmd.Env = append(os.Environ(), "DOCKER_HOST=unix:///var/run/docker.sock")
 
-	if logCh != nil {
-		w := NewLogWriter(logCh, 5*1024*1024)
-		cmd.Stdout = w
-		cmd.Stderr = w
+	// Selalu bungkus output ke LogWriter — NewLogWriter menangani nil channel.
+	w := NewLogWriter(logCh, 5*1024*1024)
+	cmd.Stdout, cmd.Stderr = w, w
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker build: %w\n%s", err, lastLines(w.String(), 15))
 	}
-	return cmd.Run()
+	return nil
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }

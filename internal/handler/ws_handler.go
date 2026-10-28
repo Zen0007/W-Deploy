@@ -78,6 +78,7 @@ func (h *WSHandler) Serve(w http.ResponseWriter, r *http.Request) {
 			}
 			defer logsReader.Close()
 			scanner := bufio.NewScanner(logsReader)
+
 			for scanner.Scan() {
 				line := scanner.Text()
 				client.Send(map[string]any{
@@ -86,6 +87,9 @@ func (h *WSHandler) Serve(w http.ResponseWriter, r *http.Request) {
 					"app":  app.Slug,
 					"ts":   time.Now().UTC().Format(time.RFC3339),
 				})
+			}
+			if err := scanner.Err(); err != nil {
+				log.Printf("[ws] gagal membaca log container (app=%s): %v", app.Slug, err)
 			}
 		}()
 	}

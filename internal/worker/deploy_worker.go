@@ -240,7 +240,7 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 	r.status(string(constants.StatusBuilding))
 	imageTag := fmt.Sprintf("paas/%s:%d", app.Slug, r.dep)
 
-	r.logf("==> Build image %s dengan buildpacks...", imageTag)
+	r.logf("==> Build image %s...", imageTag) // was: "... dengan buildpacks..."
 
 	buildCtx, cancel := context.WithTimeout(ctx, constants.BuildTimeout)
 	defer cancel()
@@ -266,10 +266,14 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 	close(logCh)
 	<-done
 	if buildErr != nil || buildResult == nil || !buildResult.Success {
-		if buildResult != nil && buildResult.Error != "" {
+		switch {
+		case buildResult != nil && buildResult.Error != "":
 			return "", fmt.Errorf("build (%s): %s", buildResult.Strategy, buildResult.Error)
+		case buildErr != nil:
+			return "", buildErr
+		default:
+			return "", errors.New("build gagal tanpa detail error")
 		}
-		return "", buildErr
 	}
 	r.logf("==> Build selesai (strategy=%s, port=%d, %s)",
 		buildResult.Strategy, buildResult.RuntimePort, buildResult.Duration.Round(time.Second))

@@ -56,10 +56,19 @@ func (s *BuildService) Build(ctx context.Context, req BuildRequest) (*BuildMainR
 	// 1. Validasi source path
 	absSource, err := filepath.Abs(req.SourcePath)
 	if err != nil {
-		return nil, fmt.Errorf("invalid source path: %w", err)
+		return &BuildMainResult{
+			ImageName: req.ImageName,
+			Error:     err.Error(),
+			Duration:  time.Since(start),
+		}, fmt.Errorf("invalid source path: %w", err)
 	}
 	if fi, err := os.Stat(absSource); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("source path tidak valid: %s", absSource)
+		e := fmt.Errorf("source path tidak valid: %s", absSource)
+		return &BuildMainResult{
+			ImageName: req.ImageName,
+			Error:     e.Error(),
+			Duration:  time.Since(start),
+		}, e
 	}
 
 	// 2. Tentukan builder

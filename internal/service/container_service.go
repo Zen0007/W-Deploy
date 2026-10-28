@@ -31,11 +31,12 @@ func NewContainerService(d *docker.Client, networkName string, t *TraefikService
 
 // RunSpec adalah parameter untuk menjalankan container app.
 type RunSpec struct {
-	AppID uint
-	Slug  string
-	Image string
-	Port  int
-	Env   []string
+	AppID         uint
+	Slug          string // Slug canonical aplikasi (untuk routing Traefik)
+	ContainerName string // (Opsional) Override nama container di Docker
+	Image         string
+	Port          int
+	Env           []string
 }
 
 // ContainerName menghasilkan nama container deterministik.
@@ -46,7 +47,11 @@ func (s *ContainerService) Run(ctx context.Context, spec RunSpec) (string, error
 	if !util.IsValidSlug(spec.Slug) {
 		return "", fmt.Errorf("%w: %q", ErrInvalidSlug, spec.Slug)
 	}
-	name := ContainerName(spec.Slug)
+	// Gunakan ContainerName override jika diberikan; jika tidak, gunakan default
+	name := spec.ContainerName
+	if name == "" {
+		name = ContainerName(spec.Slug)
+	}
 
 	// Hapus container lama (jika ada). Error "not found" diabaikan.
 	_ = s.Remove(ctx, name)
@@ -100,7 +105,7 @@ func (c *ContainerService) RunStaged(
 
 	// bangun RunSpec dengan name temp + tetapi pakai port/labels dari spec alsinya
 	stagedSpec := spec
-	stagedSpec.Slug = tempName
+	stagedSpec.ContainerName = tempName
 
 	// asumsi Run() meng-create dengan containerName = "paas-app-" + spec.Slug
 	// adjust jiak implementasi Run()

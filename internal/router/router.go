@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"embed"
 	"io/fs"
+	"log"
 	"net/http"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -67,7 +69,7 @@ func New(embeddedFiles embed.FS, cfg *config.Config, h Handlers, staticDir strin
 	// Frontend statis (SPA) – selalu gunakan embed
 	mux.Handle("/", spaEmbedded(embeddedFiles))
 
-	return middleware.CORS(cfg.CORSOrigins)(mux)
+	return middleware.CORS(cfg.CORSOrigins)(recoverer(mux))
 }
 
 // spaEmbedded menyajikan file statis dari embed.FS dan fallback ke index.html.
@@ -110,5 +112,19 @@ func spaEmbedded(embeddedFiles embed.FS) http.Handler {
 			return
 		}
 		fileServer.ServeHTTP(w, r)
+	})
+}
+func recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[panic] %s %s: %v\n%s",
+					r.Method, r.URL.Path, rec, debug.Stack())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }

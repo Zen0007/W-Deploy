@@ -114,3 +114,12 @@ func (s *TokenService) Profile(ctx context.Context, login string) (*repository.U
 func (s *TokenService) Revoke(ctx context.Context, login string) error {
 	return s.repo.Delete(ctx, login)
 }
+
+// GetRefresh returns the plaintext refresh token; "" if none.
+func (s *TokenService) GetRefresh(ctx context.Context, login string) (string, error) {
+	t, err := s.repo.FindByLogin(ctx, login)
+	if err != nil || t == nil || t.RefreshToken == "" {
+		return "", err
+	}
+	return util.Decrypt(s.secret, t.RefreshToken)
+}

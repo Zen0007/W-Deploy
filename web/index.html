@@ -1448,20 +1448,34 @@
     }
 
     async function logoutUser() {
+      // Bersihkan semua timer dulu
       if (sessionTimeoutTimer) { clearTimeout(sessionTimeoutTimer); sessionTimeoutTimer = null; }
       if (refreshTimeoutTimer) { clearTimeout(refreshTimeoutTimer); refreshTimeoutTimer = null; }
       if (refreshCheckInterval) { clearInterval(refreshCheckInterval); refreshCheckInterval = null; }
+      closeAllResourceWs();
 
+      // Pakai fetch mentah — bypass apiFetch 401 retry loop.
+      // Timeout 5 detik supaya tidak hang.
       try {
-        await apiFetch('/api/auth/logout', { method: 'POST' });
-      } catch (_) { }
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 5000);
+        await fetch(API_BASE + '/api/auth/logout', {
+          method: 'POST',
+          credentials: 'include',
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+      } catch (_) { /* ignore — tetap bersihkan lokal */ }
+
+      // Selalu bersihkan state lokal, apapun hasil API
       sessionToken = '';
-      try {
-        sessionStorage.removeItem(SESSION_TOKEN_KEY);
-      } catch (err) {
-        console.warn('Unable to clear the saved session token:', err);
-      }
+      try { sessionStorage.removeItem(SESSION_TOKEN_KEY); } catch (_) { }
       currentUser = null;
+
+      // Hapus overlay login kalau ada supaya tidak bentrok dengan reload
+      const ov = document.getElementById('loginOverlay');
+      if (ov) ov.remove();
+
       window.location.reload();
     }
 
@@ -3089,7 +3103,23 @@
       const act = e.target.closest('[data-act]');
       if (act) { containerAction(act.dataset.act, act.dataset.id); return; }
       const conn = e.target.closest('[data-connect]');
-      if (conn) { openOAuth(conn.dataset.connect, 'connect'); return; }
+      if (conn) {
+        const p = conn.dataset.connect;
+        const needsRealReconnect = connections[p] && connections[p].needsReconnect;
+
+        // Reconnect GitHub = HARUS OAuth redirect asli. Mock modal tidak akan
+        // memperbarui token di server → 401 GITHUB_REAUTH_REQUIRED akan muncul lagi.
+        if (p === 'github' && needsRealReconnect) {
+          toast('info', 'Redirecting to GitHub', 'Mengotorisasi ulang akses…');
+          window.location.href = API_BASE + '/api/auth/github';
+          return;
+        }
+
+        // Connect pertama kali / provider lain: mock modal boleh (belum diimplementasi
+        // OAuth-nya). Tapi kalau nanti backend sudah support, ganti dengan redirect juga.
+        openOAuth(p, 'connect');
+        return;
+      }
       const mg = e.target.closest('[data-manage]');
       if (mg) { openOAuth(mg.dataset.manage, 'manage'); return; }
       const dc = e.target.closest('[data-disconnect]');
@@ -3306,14 +3336,25 @@
         navigate();
       });
     }
-    function showLoginPrompt() {
 
+    function showLoginPrompt() {
+      // 1. Bersihkan semua timer auth (idempotent)
       if (sessionTimeoutTimer) { clearTimeout(sessionTimeoutTimer); sessionTimeoutTimer = null; }
       if (refreshTimeoutTimer) { clearTimeout(refreshTimeoutTimer); refreshTimeoutTimer = null; }
       if (refreshCheckInterval) { clearInterval(refreshCheckInterval); refreshCheckInterval = null; }
 
+      // 2. Tutup background connections
       closeAllResourceWs();
+      try { closeLogStream(); } catch (_) { }
+      try { if (typeof _dpCleanup === 'function') _dpCleanup(); } catch (_) { }
+
+      // 3. Jangan recreate kalau sudah ada
       if (document.getElementById('loginOverlay')) return;
+
+      // 4. Cegah body scroll-lock sisa modal
+      document.body.classList.remove('overflow-hidden');
+
+      // 5. Render overlay
       const overlay = document.createElement('div');
       overlay.id = 'loginOverlay';
       overlay.className = 'fixed inset-0 z-[90] flex items-center justify-center bg-base';
@@ -3322,7 +3363,7 @@
       <div class="mx-auto grid h-14 w-14 place-items-center rounded-xl border border-line bg-panel text-accent">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-             stroke-linejoin="round" class="h-6 w-6">
+             stroke-linejoin="round" class="h-6 w-6" aria-hidden="true">
           <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
           <polyline points="10 17 15 12 10 7"/>
           <line x1="15" y1="12" x2="3" y2="12"/>
@@ -3332,15 +3373,40 @@
         <h1 class="text-lg font-medium text-zinc-100">Sign in to continue</h1>
         <p class="mt-1 text-sm text-zinc-400">Authenticate with GitHub to access the W-deploy console.</p>
       </div>
-      <a href="https://api.wdeploy.my.id/api/auth/github" class="btn-primary inline-flex">
+      <a href="${API_BASE}/api/auth/github" id="btnOverlaySignIn"
+         class="btn-primary inline-flex">
         <svg viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4" aria-hidden="true">
           <path d="${GH_PATH}"/>
         </svg>
         Sign in with GitHub
       </a>
+      <div class="pt-2">
+        <p class="text-xs text-zinc-500">Sign-in not working? Clear the local session and try again.</p>
+        <button type="button" id="btnOverlaySignOut"
+                class="btn-ghost mt-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300">
+          Clear session &amp; sign out
+        </button>
+      </div>
     </div>`;
+
+      // 6. Escape hatch — pakai logoutUser yang sudah ada
+      overlay.querySelector('#btnOverlaySignOut').addEventListener('click', function (e) {
+        e.preventDefault();
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = 'Signing out…';
+        logoutUser();   // ← ini reload setelah selesai, overlay hilang otomatis
+      });
+
+      // 7. Sign-in: redirect native + toast feedback
+      overlay.querySelector('#btnOverlaySignIn').addEventListener('click', function () {
+        toast('info', 'Redirecting to GitHub', 'Menyiapkan OAuth flow…');
+      });
+
       document.body.appendChild(overlay);
     }
+
+
     init();
   </script>
 </body>

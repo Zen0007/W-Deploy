@@ -47,6 +47,10 @@ func NewDeployHandler(apps *service.AppService, workspace string, upload *servic
 //   - multipart/form-data     -> uploaded folder files + name, slug, port, buildpack, database, env (JSON)
 func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.User(r)
+	if claims == nil || claims.Login == "" {
+		writeError(w, http.StatusUnauthorized, "sesi tidak valid")
+		return
+	}
 
 	var (
 		req     model.DeployRequest
@@ -55,10 +59,10 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 
 	ct := r.Header.Get("Content-Type")
 
-	archiveFiles := r.MultipartForm.File["archive"]
-	folderFiles := r.MultipartForm.File["files"]
-	hasArchive := len(archiveFiles) > 0
-	hasFolder := len(folderFiles) > 0
+	var (
+		hasArchive bool
+		hasFolder  bool
+	)
 
 	switch {
 	case strings.HasPrefix(ct, "multipart/form-data"):
@@ -68,6 +72,10 @@ func (h *DeployHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		archiveFiles := r.MultipartForm.File["archive"]
+		folderFiles := r.MultipartForm.File["files"]
+		hasArchive = len(archiveFiles) > 0
+		hasFolder = len(folderFiles) > 0
 		// Frontend mengirim source="upload"
 		req.SourceType = string(constants.SourceZip) // Tetap gunakan tipe Zip agar service layer tidak perlu diubah
 
@@ -338,11 +346,10 @@ func archiveServerFolder(sourceRoot, sourcePath, workspace string) (string, erro
 		return "", fmt.Errorf("folder source tidak berisi file")
 	}
 	if err := zipWriter.Close(); err != nil {
-		_ = out.Close()
-		return "", fmt.Errorf("gagal menyelesaikan file zip: %v", err)
+		return "", fmt.Errorf("tutup zip: %w", err)
 	}
 	if err := out.Close(); err != nil {
-		return "", fmt.Errorf("gagal menulis file zip: %v", err)
+		return "", fmt.Errorf("tutup file: %w", err)
 	}
 	ok = true
 	return dst, nil

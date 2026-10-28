@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -22,11 +21,12 @@ func NewGitHubHandler(gh *service.GitHubService, tokens *service.TokenService) *
 
 // Repos: GET /api/github/repos?page=1&per_page=30&type=all&sort=updated
 func (h *GitHubHandler) Repos(w http.ResponseWriter, r *http.Request) {
-	login := middleware.User(r).Login
-	if login == "" {
+	u := middleware.User(r)
+	if u == nil || u.Login == "" {
 		writeError(w, http.StatusUnauthorized, "sesi tidak valid")
 		return
 	}
+	login := u.Login
 
 	tok, err := h.tokens.Get(r.Context(), login)
 	if err != nil {
@@ -44,29 +44,25 @@ func (h *GitHubHandler) Repos(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[github] FETCH for %s (token_len=%d)", login, len(tok))
 
 	repos, err := h.gh.FetchUserRepositories(r.Context(), tok, nil)
-	if err != nil {
-		log.Printf("[github] FETCH FAILED for %s: %v", login, err)
-		// GANTI 502 MENJADI 400 ATAU 401
-		writeError(w, http.StatusBadRequest, "GitHub API Error: "+err.Error())
+	if err == nil {
+		writeJSON(w, http.StatusOK, repos) // <- the missing success path
 		return
 	}
 
 	// Error non-401 → bukan masalah auth, teruskan pesan apa adanya
 	var ghErr *service.GitHubAPIError
 	if !errors.As(err, &ghErr) || ghErr.StatusCode != http.StatusUnauthorized {
-		log.Printf("[github] FETCH FAILED for %s: %v", login, err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("GitHub API Error: %v", err))
+		log.Printf("[github] fetch failed for %s: %v", login, err)
+		writeError(w, http.StatusBadGateway, "GitHub API error: "+err.Error())
 		return
 	}
 
 	// === GitHub 401 Bad credentials → coba refresh token GitHub ===
 	log.Printf("[github] 401 from GitHub for %s, attempting refresh", login)
 
-	refreshTok, rErr := h.tokens.Get(r.Context(), login)
-	if rErr != nil {
-		log.Printf("[github] read refresh failed for %s: %v", login, rErr)
-	}
-	if refreshTok == "" {
+	// 401 from GitHub: try refreshing once
+	refreshTok, rErr := h.tokens.GetRefresh(r.Context(), login)
+	if rErr != nil || refreshTok == "" {
 		writeGitHubReauth(w, "GitHub membutuhkan otorisasi ulang. Silakan hubungkan ulang GitHub.")
 		return
 	}
