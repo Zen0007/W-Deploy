@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,13 @@ type ContainerService struct {
 	docker  *docker.Client
 	network string
 	traefik *TraefikService
+}
+
+// ContainerStatsResult menyimpan snapshot stats satu container
+type ContainerStatsResult struct {
+	CPUPercent float64
+	MemBytes   uint64
+	StartedAt  time.Time
 }
 
 func NewContainerService(d *docker.Client, networkName string, t *TraefikService) *ContainerService {
@@ -196,6 +204,58 @@ func (s *ContainerService) StreamLogs(ctx context.Context, nameOrID string, tail
 		_, _ = stdcopy.StdCopy(pw, pw, res)
 	}()
 	return pr, nil
+}
+
+// GetStats mengambil snapshot CPU/memory/uptime satu container dari Docker API.
+// Non-blocking: butuh ~1 detik karena Docker stats butuh delta sampling.
+func (s *ContainerService) GetStats(ctx context.Context, containerID string) (*ContainerStatsResult, error) {
+	if containerID == "" {
+		return nil, fmt.Errorf("container ID Kosong")
+	}
+
+	// 1. Inspect -> ambil StartedAt untuk uptime
+	inspect, err := s.docker.Client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("inspect: %w", err)
+	}
+	if inspect.Container.State == nil || !inspect.Container.State.Running {
+		return nil, fmt.Errorf("container tidak running")
+	}
+
+	// 2. stats snapshot (non-streaming)
+	statsReps, err := s.docker.Client.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: false})
+	if err != nil {
+		return nil, fmt.Errorf("stats: %w", err)
+	}
+	defer statsReps.Body.Close()
+
+	var v container.StatsResponse
+	if err := json.NewDecoder(statsReps.Body).Decode(&v); err != nil {
+		return nil, fmt.Errorf("decode stats: %w", err)
+	}
+
+	// 3. CPU % = (cpu_delta/ system_delta) x num_cores x 100
+	cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage) - float64(v.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(v.CPUStats.SystemUsage) - float64(v.PreCPUStats.SystemUsage)
+
+	var cpuPct float64
+	if systemDelta > 0 && cpuDelta > 0 {
+		cpuPct = (cpuDelta / systemDelta) * float64(len(v.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+	}
+
+	// 4. memory - kurangi cache (samakan dengan 'docker stats)
+	memUsage := v.MemoryStats.Usage
+	if cache, ok := v.MemoryStats.Stats["cache"]; ok && cache < memUsage {
+		memUsage -= cache
+	}
+
+	startedAt, _ := time.Parse(time.RFC3339Nano, inspect.Container.State.StartedAt)
+
+	return &ContainerStatsResult{
+		CPUPercent: cpuPct,
+		MemBytes:   memUsage,
+		StartedAt:  startedAt,
+	}, nil
 }
 
 // Remove menghentikan lalu menghapus container berdasarkan nama/ID.

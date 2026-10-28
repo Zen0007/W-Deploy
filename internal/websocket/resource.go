@@ -1,7 +1,6 @@
-package service
+package websocket
 
 import (
-	"W-dev/internal/websocket"
 	"context"
 	"log"
 	"os"
@@ -14,17 +13,17 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
-// ResourceService memantau resource host (CPU, RAM, Disk) dan mengirim
+// ResourceBroadcaster memantau resource host (CPU, RAM, Disk) dan mengirim
 // event ke WebSocket hub setiap interval.
-type ResourceService struct {
-	hub      *websocket.Hub
+type ResourceBroadcaster struct {
+	hub      *Hub
 	hostProc string // contoh: /host/proc
 	hostRoot string // contoh: /host/root
 	interval time.Duration
 }
 
-func NewResourceService(hub *websocket.Hub) *ResourceService {
-	return &ResourceService{
+func NewResourceBroadcaster(hub *Hub) *ResourceBroadcaster {
+	return &ResourceBroadcaster{
 		hub:      hub,
 		hostProc: detectHostProc(),
 		hostRoot: detectHostRoot(),
@@ -56,7 +55,7 @@ func detectHostRoot() string {
 	return ""
 }
 
-func (s *ResourceService) ctx() context.Context {
+func (s *ResourceBroadcaster) ctx() context.Context {
 	ctx := context.Background()
 
 	if s.hostProc == "" {
@@ -71,7 +70,7 @@ func (s *ResourceService) ctx() context.Context {
 }
 
 // Start monitoring resource (CPU, RAM, Disk) dan mengirim event ke WebSocket hub.
-func (s *ResourceService) Start(ctx context.Context) {
+func (s *ResourceBroadcaster) Starts(ctx context.Context) {
 
 	warmCtx, cancel := context.WithTimeout(s.ctx(), 5*time.Second)
 	defer cancel()
@@ -92,14 +91,14 @@ func (s *ResourceService) Start(ctx context.Context) {
 		}
 	}
 }
-func (s *ResourceService) collectAndBroadcast() {
+func (s *ResourceBroadcaster) collectAndBroadcast() {
 	s.hub.Broadcast("resource/cpu", s.CollectCPU())
 	s.hub.Broadcast("resource/ram", s.CollectRAM())
 	s.hub.Broadcast("resource/disk", s.CollectDisk())
 }
 
 // ========================== CPU ==========================
-func (s *ResourceService) CollectCPU() map[string]any {
+func (s *ResourceBroadcaster) CollectCPU() map[string]any {
 	ctx := s.ctx()
 
 	// Interval 0 = non-blocking, mengembalikan nilai rata-rata sejak boot.
@@ -125,7 +124,7 @@ func (s *ResourceService) CollectCPU() map[string]any {
 }
 
 // ========================== RAM ==========================
-func (s *ResourceService) CollectRAM() map[string]any {
+func (s *ResourceBroadcaster) CollectRAM() map[string]any {
 	ctx := s.ctx()
 	vm, err := mem.VirtualMemoryWithContext(ctx)
 	if err != nil {
@@ -157,7 +156,7 @@ var physicalFS = map[string]bool{
 	"vfat": true, "ntfs": true, "exfat": true,
 }
 
-func (s *ResourceService) CollectDisk() map[string]any {
+func (s *ResourceBroadcaster) CollectDisk() map[string]any {
 	ctx := s.ctx()
 
 	partitions, err := disk.PartitionsWithContext(ctx, false)

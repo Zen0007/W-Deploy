@@ -82,6 +82,7 @@ func main() {
 	if !ghSvc.Configured() {
 		log.Println("[peringatan] GitHub OAuth belum dikonfigurasi (GITHUB_CLIENT_ID/SECRET)")
 	}
+
 	tokenSvc := service.NewTokenService(tokenRepo, cfg.JWTSecret)
 	traefikSvc := service.NewTraefikService(constants.DockerNetworkName, cfg.MainDomain, cfg.TraefikTLS, cfg.TraefikCertResolver)
 	containerSvc := service.NewContainerService(dockerCli, constants.DockerNetworkName, traefikSvc)
@@ -92,11 +93,19 @@ func main() {
 	cleanupSvc := service.NewCleanupService(containerSvc, dbSvc, buildSvc, ghSvc, tokenSvc, appRepo, appDBRepo, cfg.WorkspacePath)
 
 	// 7. WebSocket hub, queue, worker
+	// 7. WebSocket hub, queue, worker
 	hub := websocket.NewHub()
 	queue := worker.NewQueue(cfg.QueueSize)
-	resourceSvc := service.NewResourceService(hub)
-	appSvc := service.NewAppService(appRepo, deployRepo, envRepo, appDBRepo, ghSvc, tokenSvc, traefikSvc, cleanupSvc, queue)
 
+	resourceSvc := websocket.NewResourceBroadcaster(hub)
+	appSvc := service.NewAppService(appRepo, deployRepo, envRepo, appDBRepo, ghSvc, tokenSvc, traefikSvc, cleanupSvc, queue)
+	statsBroadcaster := websocket.NewContainerStatsBroadcaster(hub, appSvc, containerSvc)
+
+	// --- [BARU] Jalankan Background Broadcaster untuk Resource & Container Stats ---
+	go resourceSvc.Starts(ctx)
+	go statsBroadcaster.Start(ctx)
+
+	
 	dw := worker.NewDeployWorker(worker.Deps{
 		Queue: queue, Apps: appRepo, Deploys: deployRepo, Envs: envRepo, AppDBs: appDBRepo,
 		Git: gitSvc, Upload: uploadSvc, Build: buildSvc, Containers: containerSvc,
@@ -112,10 +121,10 @@ func main() {
 	handlers := router.Handlers{
 		Auth:    handler.NewAuthHandler(cfg, ghSvc, tokenSvc),
 		GitHub:  handler.NewGitHubHandler(ghSvc, tokenSvc),
-		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath,uploadSvc),
+		Deploy:  handler.NewDeployHandler(appSvc, cfg.WorkspacePath, uploadSvc),
 		App:     handler.NewAppHandler(appSvc),
 		Webhook: handler.NewWebhookHandler(ghSvc, appSvc, appRepo),
-		WS:      handler.NewWSHandler(hub, appSvc, containerSvc, resourceSvc, cfg.CORSOrigins),
+		WS:      handler.NewWSHandler(hub, appSvc, containerSvc, resourceSvc, statsBroadcaster, cfg.CORSOrigins),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

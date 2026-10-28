@@ -61,10 +61,14 @@ func New(embeddedFiles embed.FS, cfg *config.Config, h Handlers, staticDir strin
 	mux.Handle("DELETE /api/apps/{id}/env/{key}", protect(h.App.DeleteEnv))
 
 	mux.Handle("GET /api/ws/apps/{id}", authWS(http.HandlerFunc(h.WS.Serve)))
+
 	// Resource monitoring WebSocket
 	mux.Handle("GET /api/ws/resource/cpu", authWS(http.HandlerFunc(h.WS.ResourceCPU)))
 	mux.Handle("GET /api/ws/resource/ram", authWS(http.HandlerFunc(h.WS.ResourceRAM)))
 	mux.Handle("GET /api/ws/resource/disk", authWS(http.HandlerFunc(h.WS.ResourceDisk)))
+
+	// rute Container Stats WebSocket
+	mux.Handle("GET /api/ws/containers/stats", authWS(http.HandlerFunc(h.WS.ContainerStats)))
 
 	// Frontend statis (SPA) – selalu gunakan embed
 	mux.Handle("/", spaEmbedded(embeddedFiles))

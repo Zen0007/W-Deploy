@@ -1,6 +1,9 @@
 package websocket
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 const historyPerRoom = 300
 
@@ -86,7 +89,6 @@ func (h *Hub) Clients(room string) int {
 // menerima nilai lama yang sudah tidak relevan.
 //
 // Tidak pernah memblokir: client yang lambat akan kehilangan pesan (lihat Client.Send).
-
 func (h *Hub) Broadcast(room string, event any) {
 	h.mu.RLock()
 	clients := make([]*Client, 0, len(h.rooms[room]))
@@ -103,4 +105,19 @@ func (h *Hub) Broadcast(room string, event any) {
 	for _, c := range clients {
 		c.Send(event)
 	}
+}
+
+// RoomsWithPrefix mengembalikan snapshot nama room yang punya prefix tertentu
+// dan sedang punya minimal satu client aktif.
+// Dipakai broadcaster per-user (mis. "stats/user/").
+func (h *Hub) RoomsWithPrefix(prefix string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]string, 0, 16)
+	for room, clients := range h.rooms {
+		if len(clients) > 0 && strings.HasPrefix(room, prefix) {
+			out = append(out, room)
+		}
+	}
+	return out
 }

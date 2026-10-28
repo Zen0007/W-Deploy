@@ -1058,12 +1058,26 @@
         </button>
       </div>
     </div>
+
   </div>
   <!-- Toasts -->
   <div id="toastWrap"
     class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
     aria-live="polite" aria-atomic="false"></div>
-
+  <datalist id="envKeySuggestions">
+    <option value="VITE_FIREBASE_API_KEY">
+    <option value="VITE_FIREBASE_AUTH_DOMAIN">
+    <option value="VITE_FIREBASE_PROJECT_ID">
+    <option value="VITE_FIREBASE_STORAGE_BUCKET">
+    <option value="VITE_FIREBASE_MESSAGING_SENDER_ID">
+    <option value="VITE_FIREBASE_APP_ID">
+    <option value="DATABASE_URL">
+    <option value="NODE_ENV">
+    <option value="PORT">
+    <option value="API_BASE_URL">
+    <option value="SECRET_KEY">
+    <option value="JWT_SECRET">
+  </datalist>
   <script>
     'use strict';
 
@@ -1142,10 +1156,12 @@
     } catch (err) {
       console.warn('Unable to restore the session token:', err);
     }
+
     function closeAllResourceWs() {
       if (_resWsCpu) { _resWsCpu.close(); _resWsCpu = null; }
       if (_resWsRam) { _resWsRam.close(); _resWsRam = null; }
       if (_resWsDisk) { _resWsDisk.close(); _resWsDisk = null; }
+      stopContainerStatsMonitoring();
     }
 
 
@@ -1209,6 +1225,7 @@
                 onRefreshed(sessionToken);
                 closeAllResourceWs();
                 startResourceMonitoring();
+                startContainerStatsMonitoring();
                 return await apiFetch(url, opts);
               } else {
                 throw new Error('Refresh token expired');
@@ -1353,6 +1370,7 @@
                   }
                   closeAllResourceWs();
                   startResourceMonitoring();
+                  startContainerStatsMonitoring();
                   checkAuth();
                 } else {
                   closeAllResourceWs();
@@ -1674,7 +1692,7 @@
       }
       w.innerHTML = deployEnvVars.map(function (e, i) {
         return '<div class="flex gap-2">' +
-          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-deploy-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="..." value="' + esc(e.k) + '" data-deploy-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
           '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-deploy-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
           '<button type="button" class="icon-btn shrink-0 border border-line" data-deploy-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
           '</div>';
@@ -1683,41 +1701,115 @@
 
     function parseEnvContent(text) {
       const result = [];
-      text.split('\n').forEach(function (raw) {
-        const line = raw.trim();
-        if (!line || line.startsWith('#')) return;
+      const lines = text.split(/\r?\n/);
+      let i = 0;
+
+      while (i < lines.length) {
+        let raw = lines[i];
+        i++;
+
+        // Hapus BOM di awal file
+        if (i === 1) raw = raw.replace(/^\uFEFF/, '');
+
+        let line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+
+        // Support `export KEY=VALUE`
+        line = line.replace(/^export\s+/i, '');
+
+        // Cari separator `=` pertama
         const eq = line.indexOf('=');
-        if (eq < 1) return;
-        const k = line.slice(0, eq).trim();
-        let v = line.slice(eq + 1).trim();
-        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-          v = v.slice(1, -1);
+        if (eq < 1) continue;
+
+        let key = line.slice(0, eq).trim();
+        let value = line.slice(eq + 1).trim();
+
+        // Validasi key — harus match pola yang backend terima
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+
+        // Quote handling: kalau value diawali `"` atau `'`, kita baca sampai quote penutup
+        // (bisa multi-line untuk value panjang)
+        if (value.startsWith('"') || value.startsWith("'")) {
+          const quote = value[0];
+          // Kalau quote penutup ada di baris ini juga
+          if (value.length > 1 && value.endsWith(quote) && value.length > 2) {
+            value = value.slice(1, -1);
+          } else {
+            // Multi-line: gabung sampai ketemu quote penutup
+            let acc = value.slice(1); // buang opening quote
+            while (i < lines.length && !acc.endsWith(quote)) {
+              acc += '\n' + lines[i];
+              i++;
+            }
+            if (acc.endsWith(quote)) acc = acc.slice(0, -1);
+            value = acc;
+          }
+        } else {
+          // Tanpa quote — strip inline comment (` #...`)
+          const hashIdx = value.indexOf(' #');
+          if (hashIdx > -1) value = value.slice(0, hashIdx).trim();
+          // Strip trailing comment dengan tab
+          const tabIdx = value.indexOf('\t#');
+          if (tabIdx > -1) value = value.slice(0, tabIdx).trim();
         }
-        if (k) result.push({ k: k, v: v });
-      });
+
+        // Unescape escaped quotes/backslash
+        value = value.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\n/g, '\n');
+
+        result.push({ k: key, v: value });
+      }
       return result;
     }
 
     // Read the shallowest .env-family file from the picked folder, without
     // touching the ZIP contents (still filtered for security).
     async function detectEnvFromFiles(files) {
-      const candidates = ['.env', '.env.local', '.env.production', '.env.development'];
-      let best = null, bestDepth = Infinity;
+      // Urutan prioritas: paling spesifik dulu. Depth paling dangkal menang
+      // saat ada multiple file di folder berbeda.
+      const PRIORITY = [
+        '.env.local',
+        '.env.production',
+        '.env.development',
+        '.env',
+        'env.example',
+        '.env.example',
+      ];
+
+      let best = null;
+      let bestScore = -Infinity;
+
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        if (candidates.indexOf(f.name) === -1) continue;
+        const idx = PRIORITY.indexOf(f.name);
+        if (idx === -1) continue;
+
         const rel = f.webkitRelativePath || f.name;
         const depth = rel.split('/').length;
-        if (depth < bestDepth) { bestDepth = depth; best = f; }
+
+        // Skor lebih tinggi = lebih dipilih.
+        // Prioritas utama: nama file (idx lebih kecil = lebih baik).
+        // Tiebreaker: depth lebih kecil (lebih dangkal = lebih baik).
+        const score = (PRIORITY.length - idx) * 1000 - depth;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = f;
+        }
       }
+
       if (!best) return [];
+
       try {
-        return parseEnvContent(await best.text());
+        const text = await best.text();
+        const parsed = parseEnvContent(text);
+        console.log('[env] auto-detected from', best.webkitRelativePath || best.name, '→', parsed.length, 'vars');
+        return parsed;
       } catch (e) {
         console.warn('[env] failed to read', best.name, e);
         return [];
       }
     }
+
     // ─── Client-side ZIP packaging ─────────────────────────────────────────
     // Filter path relatif root project, buang artefak build & dependency.
     // Ini mengurangi ukuran upload dan mencegah buildpack salah deteksi.
@@ -1734,7 +1826,6 @@
       /(^|\/)build(\/|$)/,
       /(^|\/)out(\/|$)/,
       /(^|\/)\.DS_Store$/,
-      /(^|\/)\.env($|\.)/,
       /\.log$/,
     ];
 
@@ -2279,9 +2370,7 @@
     async function fetchEnvVars(appId) {
       try {
         const data = await apiFetch('/api/apps/' + appId + '/env');
-        envVars = Array.isArray(data)
-          ? data.map(function (e) { return { k: e.key || e.k, v: e.value || e.v }; })
-          : Object.entries(data).map(function (p) { return { k: p[0], v: p[1] }; });
+        envVars = normalizeEnvResponse(data);
         currentAppId = appId;
         renderEnvVars();
       } catch (err) {
@@ -2291,7 +2380,17 @@
 
     async function saveEnvVars(appId) {
       try {
-        const payload = envVars.filter(function (e) { return e.k; });
+        const envObj = {};
+        envVars.forEach(function (e) {
+          const k = (e.k || '').trim();
+          if (!k) return;
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return;
+          // Pastikan value scalar
+          if (e.v !== null && typeof e.v === 'object') return;
+          envObj[k] = String(e.v ?? '');
+        });
+        const payload = { env: envObj };
+
         await apiFetch('/api/apps/' + appId + '/env', { method: 'PUT', body: payload });
         toast('success', 'Env vars saved', 'Environment updated for ' + appId + '.');
         dirty = false;
@@ -2357,7 +2456,95 @@
     function closeLogStream() {
       if (currentLogWs) { try { currentLogWs.close(); } catch (_) { } currentLogWs = null; }
     }
+    // ─── Container stats WebSocket ──────────────────────────────────────
+    let _containersStatsWs = null;
 
+    function makeContainerStatsWS() {
+      let ws = null, retryDelay = 2000, retryTimer = null, stopped = false;
+
+      function connect() {
+        if (stopped) return;
+        ws = new WebSocket(wsURL('/api/ws/containers/stats'));
+
+        ws.onopen = function () {
+          console.log('[ws] container stats OPEN');
+          retryDelay = 2000;
+        };
+
+        ws.onmessage = function (ev) {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch (_) { return; }
+          if (msg.type !== 'stats' || !msg.containers) return;
+
+          Object.keys(msg.containers).forEach(function (appId) {
+            const s = msg.containers[appId];
+            const c = CONTAINERS.find(function (x) { return String(x.id) === String(appId); });
+            if (!c) return;
+
+            c.cpu = (typeof s.cpu === 'number')
+              ? s.cpu.toFixed(1) + '%'
+              : '—';
+
+            if (typeof s.memory_mb === 'number' && s.memory_mb > 0) {
+              c.mem = s.memory_mb >= 1024
+                ? (s.memory_mb / 1024).toFixed(1) + ' GB'
+                : s.memory_mb.toFixed(0) + ' MB';
+            } else {
+              c.mem = '0 MB';
+            }
+
+            if (typeof s.uptime_seconds === 'number' && s.uptime_seconds > 0) {
+              c.uptime = formatUptime(s.uptime_seconds);
+            } else {
+              c.uptime = '—';
+            }
+          });
+
+          scheduleContainerRerender();
+        };
+
+        ws.onerror = function () { try { ws.close(); } catch (_) { } };
+
+        ws.onclose = function () {
+          if (stopped) return;
+          console.log('[ws] container stats CLOSE — retry in', retryDelay, 'ms');
+          retryTimer = setTimeout(connect, retryDelay);
+          retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+      }
+
+      connect();
+      return { close: function () { stopped = true; if (retryTimer) clearTimeout(retryTimer); if (ws) try { ws.close(); } catch (_) { } } };
+    }
+
+    function startContainerStatsMonitoring() {
+      if (_containersStatsWs) return;
+      _containersStatsWs = makeContainerStatsWS();
+    }
+
+    function stopContainerStatsMonitoring() {
+      if (_containersStatsWs) { _containersStatsWs.close(); _containersStatsWs = null; }
+    }
+
+    // Batasi re-render: 20 update dalam 1 tick → 1 render
+    let _containerRerenderTimer = null;
+    function scheduleContainerRerender() {
+      if (_containerRerenderTimer) return;
+      _containerRerenderTimer = requestAnimationFrame(function () {
+        _containerRerenderTimer = null;
+        if (current === 'containers' || current === 'overview') renderRoute();
+      });
+    }
+
+    function formatUptime(sec) {
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      if (d > 0) return d + 'd ' + h + 'h';
+      if (h > 0) return h + 'h ' + m + 'm';
+      if (m > 0) return m + 'm';
+      return Math.floor(sec) + 's';
+    }
     // ─── App state (non-data) — declared above with other let bindings ────────────
 
     // Status badge builders
@@ -2482,9 +2669,7 @@
 
       try {
         const data = await apiFetch('/api/apps/' + appId + '/env');
-        _editEnvVars = Array.isArray(data)
-          ? data.map(function (e) { return { k: e.key || e.k, v: e.value || e.v }; })
-          : Object.entries(data || {}).map(function (p) { return { k: p[0], v: p[1] }; });
+        _editEnvVars = normalizeEnvResponse(data);
         if (!_editEnvVars.length) _editEnvVars = [{ k: '', v: '' }];
       } catch (e) {
         toast('danger', 'Env load failed', e.message);
@@ -2495,6 +2680,66 @@
       $('#btnEditEnvCancel').disabled = false;
     }
 
+    function normalizeEnvResponse(data) {
+      if (!data) return [];
+
+      // Case A: array [{key, value}] atau [{k, v}]
+      if (Array.isArray(data)) {
+        return data
+          .map(function (e) {
+            return {
+              k: String(e.key || e.k || '').trim(),
+              v: e.value !== undefined ? String(e.value) : String(e.v ?? ''),
+            };
+          })
+          .filter(function (e) { return e.k && /^[A-Za-z_][A-Za-z0-9_]*$/.test(e.k); });
+      }
+
+      // Case B: wrapper { env: {...}, ... } — PALING UMUM di backend modern.
+      // Kalau ada field `env` berupa object, pakai itu SAJA. Metadata lain diabaikan.
+      if (data.env && typeof data.env === 'object' && !Array.isArray(data.env)) {
+        return Object.entries(data.env)
+          .map(function (p) {
+            return { k: String(p[0]).trim(), v: String(p[1] ?? '') };
+          })
+          .filter(function (e) { return e.k && /^[A-Za-z_][A-Za-z0-9_]*$/.test(e.k); });
+      }
+
+      // Case C: flat map {KEY: VALUE} — filter metadata yang suka nyelip.
+      // Aturan:
+      //   1. Key harus match env var naming pattern.
+      //   2. Value HARUS scalar (string/number/boolean/null) — array/object = metadata.
+      //   3. Key lowercase satu kata yang biasanya metadata (node, npm, go, ...) → skip.
+      const METADATA_KEYS = new Set([
+        'node', 'npm', 'yarn', 'pnpm', 'bun',
+        'go', 'python', 'ruby', 'java', 'rust', 'php',
+        'env', 'warnings', 'errors', 'project', 'project_type',
+        'buildpack', 'database', 'source', 'status', 'message',
+        'created_at', 'updated_at', 'app_id', 'id',
+        'slug', 'name', 'port', 'branch', 'repo', 'version',
+        'url', 'region', 'image', 'memory', 'cpu', 'uptime',
+      ]);
+
+      return Object.entries(data)
+        .filter(function (p) {
+          const [k, v] = p;
+
+          // Rule 1: valid env var key
+          if (!k || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return false;
+
+          // Rule 2: value harus scalar
+          if (v !== null && typeof v === 'object') return false;
+
+          // Rule 3: blocklist metadata
+          if (METADATA_KEYS.has(k.toLowerCase())) return false;
+
+          return true;
+        })
+        .map(function (p) {
+          return { k: String(p[0]).trim(), v: String(p[1] ?? '') };
+        });
+    }
+
     function renderEditEnv() {
       const w = $('#editEnvList');
       if (!_editEnvVars.length) {
@@ -2503,7 +2748,7 @@
       }
       w.innerHTML = _editEnvVars.map(function (e, i) {
         return '<div class="flex gap-2">' +
-          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="..." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
           '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-edit-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
           '<button type="button" class="icon-btn shrink-0 border border-line" data-edit-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
           '</div>';
@@ -2528,9 +2773,15 @@
       $('#editEnvSpin').classList.remove('hidden');
       $('#editEnvLabel').textContent = 'Saving…';
 
-      const payload = _editEnvVars
-        .map(function (e) { return { k: (e.k || '').trim(), v: e.v }; })  // ← {k, v}, BUKAN {key, value}
-        .filter(function (e) { return e.k; });
+      // Backend mengharapkan { "env": { "KEY": "VALUE" } }
+      const envObj = {};
+      _editEnvVars.forEach(function (e) {
+        const k = (e.k || '').trim();
+        if (k) envObj[k] = e.v;
+      });
+
+      const payload = { env: envObj };
+
 
       try {
         await apiFetch('/api/apps/' + _editEnvAppId + '/env', { method: 'PUT', body: payload });
@@ -2809,7 +3060,7 @@
       }
       w.innerHTML = envVars.map(function (e, i) {
         return '<div class="flex flex-col gap-2 sm:flex-row">' +
-          '<input type="text" class="input font-mono sm:w-56" value="' + esc(e.k) + '" data-var-k="' + i + '" aria-label="Variable name" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input font-mono sm:w-56" value="' + esc(e.k) + '" data-var-k="' + i + '" aria-label="Variable name" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
           '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-var-v="' + i + '" aria-label="Variable value" placeholder="value" autocomplete="off" spellcheck="false">' +
           '<button type="button" class="icon-btn shrink-0 self-start border border-line" data-var-del="' + i + '" aria-label="Remove ' + (esc(e.k) || 'variable') + '">' + svgIcon('x', 'h-4 w-4') + '</button>' +
           '</div>';
@@ -3175,6 +3426,7 @@
       if (_resWsCpu) _resWsCpu.close();
       if (_resWsRam) _resWsRam.close();
       if (_resWsDisk) _resWsDisk.close();
+      stopContainerStatsMonitoring();
     });
 
     // Hash router — no reload, active nav accent, breadcrumb + title sync
@@ -3327,14 +3579,49 @@
         if (r) $('#inpBranch').value = r.defaultBranch;
       });
       // Event listener untuk folder upload
-      $('#inpLocalFiles').addEventListener('change', function (e) {
-        if (this.files.length > 0) {
-          // Ambil nama folder root (webkitRelativePath contohnya: "my-app/src/index.js")
-          const folderName = this.files[0].webkitRelativePath.split('/')[0];
-          $('#uploadLabel').textContent = folderName + ' (' + this.files.length + ' files)';
-          $('#inpLocalPath').value = ''; // Kosongkan path manual jika upload dipilih
-        } else {
+      $('#inpLocalFiles').addEventListener('change', async function () {
+        if (!this.files.length) {
           $('#uploadLabel').textContent = 'Click to select a folder';
+          return;
+        }
+
+        // 1. Update label + kosongkan path manual
+        const folderName = this.files[0].webkitRelativePath.split('/')[0] || 'folder';
+        $('#uploadLabel').textContent = folderName + ' (' + this.files.length + ' files)';
+        $('#inpLocalPath').value = '';
+
+        // 2. Auto-detect .env
+        const detected = await detectEnvFromFiles(this.files);
+        if (!detected.length) {
+          toast('info', 'No .env found', 'Tambahkan .env atau isi env manual.');
+          return;
+        }
+
+        // 3. Merge — jangan timpa yang sudah ada manual
+        const existing = new Set(
+          deployEnvVars.filter(function (e) { return e.k; }).map(function (e) { return e.k; })
+        );
+
+        let added = 0;
+        let skipped = 0;
+        detected.forEach(function (e) {
+          if (existing.has(e.k)) {
+            skipped++;
+            return;
+          }
+          deployEnvVars.push({ k: e.k, v: e.v });
+          existing.add(e.k);
+          added++;
+        });
+
+        renderDeployEnv();
+
+        if (added) {
+          $('#envDetectHint').classList.remove('hidden');
+          const msg = added + ' variabel di-import' + (skipped ? ', ' + skipped + ' di-skip (sudah ada)' : '');
+          toast('success', 'Env detected', msg);
+        } else if (skipped) {
+          toast('info', 'Env sudah ada', skipped + ' variabel sudah terisi sebelumnya.');
         }
       });
 
@@ -3353,11 +3640,6 @@
         renderDeployEnv();
       });
 
-      $('#deployEnvList').addEventListener('input', function (e) {
-        const t = e.target;
-        if (t.dataset.deployEnvK != null) deployEnvVars[Number(t.dataset.deployEnvK)].k = t.value;
-        else if (t.dataset.deployEnvV != null) deployEnvVars[Number(t.dataset.deployEnvV)].v = t.value;
-      });
 
       // Auto-detect .env when user picks a folder
       $('#inpLocalFiles').addEventListener('change', async function () {
@@ -3511,6 +3793,7 @@
         }
 
         startResourceMonitoring();
+        startContainerStatsMonitoring();
         console.log('[ws] resource monitoring started');
 
         return fetchApps()

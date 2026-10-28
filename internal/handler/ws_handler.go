@@ -18,11 +18,19 @@ type WSHandler struct {
 	hub        *websocket.Hub
 	apps       *service.AppService
 	containers *service.ContainerService
-	resource   *service.ResourceService
+	resource   *websocket.ResourceBroadcaster
+	stats      *websocket.ContainerStatsBroadcaster
 	origins    []string
 }
 
-func NewWSHandler(hub *websocket.Hub, apps *service.AppService, containers *service.ContainerService, resource *service.ResourceService, corsOrigins string) *WSHandler {
+func NewWSHandler(
+	hub *websocket.Hub,
+	apps *service.AppService,
+	containers *service.ContainerService,
+	resource *websocket.ResourceBroadcaster,
+	stats *websocket.ContainerStatsBroadcaster, // ← baru
+	corsOrigins string,
+) *WSHandler {
 	var origins []string
 	for o := range strings.SplitSeq(corsOrigins, ",") {
 		o = strings.TrimSpace(o)
@@ -37,6 +45,7 @@ func NewWSHandler(hub *websocket.Hub, apps *service.AppService, containers *serv
 		apps:       apps,
 		containers: containers,
 		resource:   resource,
+		stats:      stats, // ← baru
 		origins:    origins,
 	}
 }
@@ -141,4 +150,26 @@ func (h *WSHandler) ResourceRAM(w http.ResponseWriter, r *http.Request) {
 func (h *WSHandler) ResourceDisk(w http.ResponseWriter, r *http.Request) {
 	h.serveResourceRoom(w, r, "resource/disk", h.resource.CollectDisk)
 
+}
+
+// ContainerStats: GET /api/ws/containers/stats?token=<jwt>
+// Push stats CPU/RAM/uptime untuk semua container milik user yang login.
+func (h *WSHandler) ContainerStats(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.User(r)
+	if claims == nil || claims.Login == "" {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if h.stats == nil {
+		writeError(w, http.StatusServiceUnavailable, "container stats belum aktif")
+		return
+	}
+
+	room := "stats/user/" + claims.Login
+	// Snapshot awal: kirim data terkini ke client baru sebelum tick pertama.
+	snapshot := func() map[string]any {
+		return h.stats.SnapshotUserStats(r.Context(), claims.Login)
+	}
+
+	h.serveResourceRoom(w, r, room, snapshot)
 }
