@@ -897,61 +897,54 @@
           </p>
         </div>
 
-        <!-- Database configuration (shared, custom dropdown) -->
+        <!-- Environment variables -->
         <div>
-          <p id="dbLabelTxt" class="lbl">Database configuration</p>
-          <div id="dbWrap" class="relative">
-            <button type="button" id="dbSelect" class="input flex items-center justify-between text-left"
-              aria-haspopup="listbox" aria-expanded="false" aria-labelledby="dbLabelTxt">
-              <span id="dbValue">None</span>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="lbl !mb-0">Environment variables</label>
+            <button type="button" id="btnDeployAddEnv" class="btn-outline px-2 py-1 text-xs">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0 text-zinc-500"
+                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5"
                 aria-hidden="true">
-                <path d="m6 9 6 6 6-6" />
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
               </svg>
+              Add
             </button>
-            <ul id="dbMenu" role="listbox" aria-labelledby="dbLabelTxt" tabindex="-1"
-              class="dd-menu absolute z-10 mt-1.5 w-full rounded-lg border border-line bg-panel py-1 shadow-lg">
-              <li role="option" id="dbOpt0" aria-selected="true" data-db="none"
-                class="db-opt flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-zinc-300">
-                None<span class="db-check text-accent"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
-                    fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                    class="h-4 w-4" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg></span></li>
-              <li role="option" id="dbOpt1" aria-selected="false" data-db="sqlite"
-                class="db-opt flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-zinc-300">
-                Local (SQLite)<span class="db-check hidden text-accent"><svg xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                    stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg></span></li>
-              <li role="option" id="dbOpt2" aria-selected="false" data-db="env"
-                class="db-opt flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-zinc-300">
-                Environment variable<span class="db-check hidden text-accent"><svg xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                    stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg></span></li>
-              <li role="option" id="dbOpt3" aria-selected="false" data-db="postgres"
-                class="db-opt flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-zinc-300">
-                Managed Postgres<span class="db-check hidden text-accent"><svg xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                    stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg></span></li>
-            </ul>
           </div>
-          <div id="dbUrlWrap" class="collapse-grid">
-            <div>
-              <div class="pt-3">
-                <label for="inpDbUrl" class="lbl">DATABASE_URL</label>
-                <input id="inpDbUrl" type="text" class="input font-mono"
-                  placeholder="postgres://acme:secret@db.internal:5432/acme" autocomplete="off" spellcheck="false">
-              </div>
-            </div>
-          </div>
+          <div id="deployEnvList" class="space-y-2"></div>
+          <p class="mt-1.5 text-xs text-zinc-500">
+            Key/value pairs injected into the container.
+            <span id="envDetectHint" class="hidden text-emerald-400">Auto-filled from <code
+                class="rounded bg-subtle px-1 py-0.5 text-[11px]">.env</code> in your folder.</span>
+          </p>
         </div>
+
+        <!-- Database -->
+        <div>
+          <label for="selDatabase" class="lbl">Database</label>
+          <div class="relative">
+            <select id="selDatabase" class="input appearance-none pr-8">
+              <option value="">None</option>
+              <option value="postgres">PostgreSQL · postgres:latest</option>
+              <option value="mysql">MySQL · mysql:latest</option>
+              <option value="mongodb">MongoDB · mongodb:latest</option>
+              <option value="redis">Redis · redis:latest</option>
+            </select>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+              class="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500"
+              aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+          <p class="mt-1.5 text-xs text-zinc-500">
+            Provisions a managed database and sets <code
+              class="rounded bg-subtle px-1 py-0.5 text-[11px]">DATABASE_URL</code>
+            automatically.
+            Works for both GitHub and upload sources.
+          </p>
+        </div>
+
       </div>
       <div class="flex items-center justify-end gap-2 border-t border-line px-5 py-4">
         <button id="btnDeployCancel" type="button" class="btn-ghost">Cancel</button>
@@ -1029,7 +1022,54 @@
       </div>
     </div>
   </div>
-
+  <!-- Edit Env + Redeploy modal -->
+  <div id="modalEditEnv"
+    class="modal-overlay fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+    role="dialog" aria-modal="true" aria-labelledby="editEnvTitle">
+    <div class="modal-panel w-full max-w-lg rounded-2xl border border-line bg-panel shadow-lg">
+      <div class="flex items-center justify-between border-b border-line px-5 py-4">
+        <div>
+          <h2 id="editEnvTitle" class="text-sm font-medium text-zinc-100">Edit environment</h2>
+          <p id="editEnvSub" class="mt-0.5 font-mono text-xs text-zinc-500"></p>
+        </div>
+        <button id="btnEditEnvX" type="button" class="icon-btn" aria-label="Close dialog">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="max-h-[55vh] space-y-3 overflow-y-auto px-5 py-4">
+        <div class="flex items-center justify-between">
+          <label class="lbl !mb-0">Environment variables</label>
+          <button type="button" id="btnEditEnvAdd" class="btn-outline px-2 py-1 text-xs">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true">
+              <path d="M5 12h14" />
+              <path d="M12 5v14" />
+            </svg>
+            Add
+          </button>
+        </div>
+        <div id="editEnvList" class="space-y-2"></div>
+        <p class="text-xs text-zinc-500">
+          Changes will be saved and the app will redeploy immediately.
+        </p>
+      </div>
+      <div class="flex items-center justify-end gap-2 border-t border-line px-5 py-4">
+        <button id="btnEditEnvCancel" type="button" class="btn-ghost" disabled>Cancel</button>
+        <button id="btnEditEnvSave" type="button" class="btn-primary min-w-[140px]" disabled>
+          <svg id="editEnvSpin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="hidden h-4 w-4 animate-spin"
+            aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+          <span id="editEnvLabel">Save &amp; redeploy</span>
+        </button>
+      </div>
+    </div>
+  </div>
   <!-- Toasts -->
   <div id="toastWrap"
     class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
@@ -1642,7 +1682,61 @@
         toast('danger', 'Deploys error', err.message);
       }
     }
+    // ─── Deploy-modal env state ─────────────────────────────────────────
+    let deployEnvVars = [];  // {k, v}
 
+    function renderDeployEnv() {
+      const w = $('#deployEnvList');
+      if (!deployEnvVars.length) {
+        w.innerHTML = '<p class="rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-zinc-500">No variables yet — click Add or upload a folder with <code class="rounded bg-panel px-1">.env</code>.</p>';
+        return;
+      }
+      w.innerHTML = deployEnvVars.map(function (e, i) {
+        return '<div class="flex gap-2">' +
+          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-deploy-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
+          '<button type="button" class="icon-btn shrink-0 border border-line" data-deploy-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
+          '</div>';
+      }).join('');
+    }
+
+    function parseEnvContent(text) {
+      const result = [];
+      text.split('\n').forEach(function (raw) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) return;
+        const eq = line.indexOf('=');
+        if (eq < 1) return;
+        const k = line.slice(0, eq).trim();
+        let v = line.slice(eq + 1).trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+          v = v.slice(1, -1);
+        }
+        if (k) result.push({ k: k, v: v });
+      });
+      return result;
+    }
+
+    // Read the shallowest .env-family file from the picked folder, without
+    // touching the ZIP contents (still filtered for security).
+    async function detectEnvFromFiles(files) {
+      const candidates = ['.env', '.env.local', '.env.production', '.env.development'];
+      let best = null, bestDepth = Infinity;
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (candidates.indexOf(f.name) === -1) continue;
+        const rel = f.webkitRelativePath || f.name;
+        const depth = rel.split('/').length;
+        if (depth < bestDepth) { bestDepth = depth; best = f; }
+      }
+      if (!best) return [];
+      try {
+        return parseEnvContent(await best.text());
+      } catch (e) {
+        console.warn('[env] failed to read', best.name, e);
+        return [];
+      }
+    }
     // ─── Client-side ZIP packaging ─────────────────────────────────────────
     // Filter path relatif root project, buang artefak build & dependency.
     // Ini mengurangi ukuran upload dan mencegah buildpack salah deteksi.
@@ -2092,6 +2186,33 @@
       $('#deploySpin').classList.remove('hidden');
       $('#deployLabel').textContent = isUpload ? 'Uploading...' : 'Deploying…';
 
+      // Collect env vars (skip empty keys)
+      const envMap = {};
+      let invalidEnv = null;
+      deployEnvVars.forEach(function (e) {
+        const k = (e.k || '').trim();
+        if (!k) return;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+          if (!invalidEnv) invalidEnv = k;
+          return;
+        }
+        envMap[k] = e.v;
+      });
+      if (invalidEnv) {
+        toast('danger', 'Invalid env key', '"' + invalidEnv + '" — hanya A-Z, a-z, 0-9, _. Tidak boleh mulai angka.');
+        $('#btnDeploy').disabled = false;
+        $('#btnDeployCancel').disabled = false;
+        $('#btnDeployX').disabled = false;
+        $('#deploySpin').classList.add('hidden');
+        $('#deployLabel').textContent = 'Deploy';
+        return;
+      }
+      const dbEngine = $('#selDatabase').value;
+      if (dbEngine && envMap.DATABASE_URL) {
+        toast('info', 'DATABASE_URL ignored', 'A managed database is selected — DATABASE_URL will be set automatically.');
+        delete envMap.DATABASE_URL;
+      }
+
       let payload;
       let headers = {};
 
@@ -2099,9 +2220,11 @@
         // 1. GitHub
         payload = { source_type: 'github', repo_full_name: repoVal, branch: branch };
         if (projectType) payload.project_type = projectType;
+        if (dbEngine) payload.database = dbEngine;
+        if (Object.keys(envMap).length) payload.env = envMap;
         headers['Content-Type'] = 'application/json';
       } else if (isUpload) {
-        // 2. Upload Folder → bangun ZIP di browser, kirim sebagai field 'archive'
+        // 2. Upload Folder → ZIP
         $('#deployLabel').textContent = 'Packaging…';
         try {
           const zipBytes = await buildProjectZip(localFiles, function (done, total) {
@@ -2109,21 +2232,16 @@
           });
 
           const folderName = localFiles[0].webkitRelativePath.split('/')[0] || 'app';
-          const slug = folderName.toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '') || 'uploaded-app';
+          const slug = folderName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'uploaded-app';
 
           payload = new FormData();
           payload.append('source', 'upload');
           if (projectType) payload.append('project_type', projectType);
+          if (dbEngine) payload.append('database', dbEngine);
+          if (Object.keys(envMap).length) payload.append('env', JSON.stringify(envMap));
           payload.append('name', folderName);
           payload.append('slug', slug);
-          // Single file, bukan banyak field 'files'
-          payload.append(
-            'archive',
-            new Blob([zipBytes], { type: 'application/zip' }),
-            slug + '.zip'
-          );
+          payload.append('archive', new Blob([zipBytes], { type: 'application/zip' }), slug + '.zip');
         } catch (e) {
           console.error('[deploy] packaging failed:', e);
           toast('danger', 'Packaging failed', e.message);
@@ -2138,6 +2256,8 @@
         // 3. Server Absolute Path
         payload = { source: 'local', path: localPath };
         if (projectType) payload.project_type = projectType;
+        if (dbEngine) payload.database = dbEngine;
+        if (Object.keys(envMap).length) payload.env = envMap;
         headers['Content-Type'] = 'application/json';
       }
 
@@ -2302,7 +2422,8 @@
         // Project dari Git (GitHub/GitLab) otomatis di-deploy via webhook saat push ke branch main.
         const isZipOrLocal = c.sourceType === 'zip' || c.sourceType === 'local';
         const acts = [
-          ['logs', 'Logs', false]
+          ['logs', 'Logs', false],
+          ['edit-env', 'Env', false],       // ← new, works for all source types
         ];
         if (isZipOrLocal) {
           acts.push(['redeploy', 'Redeploy', false]);
@@ -2348,13 +2469,105 @@
         redeployApp(id);
         return;
       }
+      if (act === 'edit-env') {
+        openEditEnv(id);
+        return;
+      }
       if (act === 'delete') {
         if (!confirm('Delete ' + c.service + ' (' + id + ')? This cannot be undone.')) return;
         deleteApp(id);
         return;
       }
     }
+    // ─── Edit Env + Redeploy ────────────────────────────────────────────
+    let _editEnvAppId = null;
+    let _editEnvVars = [];
+    let _editEnvBusy = false;
 
+    async function openEditEnv(appId) {
+      const c = CONTAINERS.find(function (x) { return String(x.id) === String(appId); });
+      if (!c) return;
+
+      _editEnvAppId = appId;
+      _editEnvVars = [];
+      _editEnvBusy = false;
+      $('#editEnvSub').textContent = c.service + ' · ' + c.id;
+      $('#editEnvList').innerHTML = '<p class="text-xs text-zinc-500 py-2">Loading…</p>';
+      $('#btnEditEnvSave').disabled = true;
+      $('#btnEditEnvCancel').disabled = true;
+      $('#editEnvSpin').classList.add('hidden');
+      $('#editEnvLabel').textContent = 'Save & redeploy';
+      openModal('modalEditEnv');
+
+      try {
+        const data = await apiFetch('/api/apps/' + appId + '/env');
+        _editEnvVars = Array.isArray(data)
+          ? data.map(function (e) { return { k: e.key || e.k, v: e.value || e.v }; })
+          : Object.entries(data || {}).map(function (p) { return { k: p[0], v: p[1] }; });
+        if (!_editEnvVars.length) _editEnvVars = [{ k: '', v: '' }];
+      } catch (e) {
+        toast('danger', 'Env load failed', e.message);
+        _editEnvVars = [{ k: '', v: '' }];
+      }
+      renderEditEnv();
+      $('#btnEditEnvSave').disabled = false;
+      $('#btnEditEnvCancel').disabled = false;
+    }
+
+    function renderEditEnv() {
+      const w = $('#editEnvList');
+      if (!_editEnvVars.length) {
+        w.innerHTML = '<p class="rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-zinc-500">No variables. Click Add to create one.</p>';
+        return;
+      }
+      w.innerHTML = _editEnvVars.map(function (e, i) {
+        return '<div class="flex gap-2">' +
+          '<input type="text" class="input font-mono sm:w-44" value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-edit-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
+          '<button type="button" class="icon-btn shrink-0 border border-line" data-edit-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
+          '</div>';
+      }).join('');
+    }
+
+    async function saveEditEnvAndRedeploy() {
+      if (_editEnvBusy || !_editEnvAppId) return;
+
+      // Validasi key dulu — sebelum sentuh server
+      let invalidKey = null;
+      for (let i = 0; i < _editEnvVars.length; i++) {
+        const k = (_editEnvVars[i].k || '').trim();
+        if (k && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) { invalidKey = k; break; }
+      }
+      if (invalidKey) {
+        toast('danger', 'Invalid env key', '"' + invalidKey + '" — hanya A-Z, a-z, 0-9, _. Tidak boleh mulai angka.');
+        return;
+      }
+      $('#btnEditEnvSave').disabled = true;
+      $('#btnEditEnvCancel').disabled = true;
+      $('#editEnvSpin').classList.remove('hidden');
+      $('#editEnvLabel').textContent = 'Saving…';
+
+      const payload = _editEnvVars
+        .map(function (e) { return { k: (e.k || '').trim(), v: e.v }; })  // ← {k, v}, BUKAN {key, value}
+        .filter(function (e) { return e.k; });
+
+      try {
+        await apiFetch('/api/apps/' + _editEnvAppId + '/env', { method: 'PUT', body: payload });
+        $('#editEnvLabel').textContent = 'Redeploying…';
+        await apiFetch('/api/apps/' + _editEnvAppId + '/redeploy', { method: 'POST' });
+        toast('success', 'Env saved', 'Redeploy queued for ' + _editEnvAppId + '.');
+        closeModal('modalEditEnv');
+        pollUntilNotBuilding(_editEnvAppId);
+      } catch (e) {
+        toast('danger', 'Save failed', e.message);
+        $('#btnEditEnvSave').disabled = false;
+        $('#btnEditEnvCancel').disabled = false;
+        $('#editEnvSpin').classList.add('hidden');
+        $('#editEnvLabel').textContent = 'Save & redeploy';
+      } finally {
+        _editEnvBusy = false;
+      }
+    }
     // Overview (real data from CONTAINERS + DEPLOYS)
     function renderOverview() {
       $('#statServices').textContent = new Set(CONTAINERS.map(function (c) { return c.service; })).size;
@@ -2787,44 +3000,7 @@
       knob.classList.toggle('translate-x-4', v);
       knob.classList.toggle('translate-x-0', !v);
     }
-    const DB_LABELS = { none: 'None', sqlite: 'Local (SQLite)', env: 'Environment variable', postgres: 'Managed Postgres' };
-    let dbVal = 'none';
-    let dbOpen = false;
-    let dbActive = 0;
-    function renderDbSelected() {
-      $('#dbValue').textContent = DB_LABELS[dbVal];
-      $$('.db-opt').forEach(function (o) {
-        const sel = o.dataset.db === dbVal;
-        o.setAttribute('aria-selected', String(sel));
-        $('.db-check', o).classList.toggle('hidden', !sel);
-      });
-      $('#dbUrlWrap').classList.toggle('is-open', dbVal === 'env');
-    }
-    function highlightDb() {
-      const opts = $$('.db-opt');
-      opts.forEach(function (o, i) { o.classList.toggle('bg-subtle', i === dbActive); });
-      $('#dbMenu').setAttribute('aria-activedescendant', 'dbOpt' + dbActive);
-    }
-    function setDbOpen(v) {
-      if (dbOpen === v) return;
-      dbOpen = v;
-      $('#dbMenu').classList.toggle('is-open', v);
-      $('#dbSelect').setAttribute('aria-expanded', String(v));
-      if (v) {
-        const opts = $$('.db-opt');
-        dbActive = Math.max(0, opts.findIndex(function (o) { return o.dataset.db === dbVal; }));
-        highlightDb();
-        $('#dbMenu').focus();
-      }
-    }
-    function chooseDb(i) {
-      const o = $$('.db-opt')[i];
-      if (!o) return;
-      dbVal = o.dataset.db;
-      renderDbSelected();
-      setDbOpen(false);
-      $('#dbSelect').focus();
-    }
+
     // resetDeploy — repopulate deploy modal fields
     function resetDeploy(opts) {
       const o = opts || {};
@@ -2841,16 +3017,18 @@
         }).join('');
       $('#inpBranch').value = r ? r.defaultBranch : 'main';
       if ($('#selProjectType')) $('#selProjectType').value = '';
-      dbVal = 'none';
+
       renderDbSelected();
-      setDbOpen(false);
-      $('#inpDbUrl').value = '';
       $('#btnDeploy').disabled = false;
       $('#btnDeployCancel').disabled = false;
       $('#btnDeployX').disabled = false;
       $('#deploySpin').classList.add('hidden');
       $('#deployLabel').textContent = 'Deploy';
       $('#deployEnvLabel').textContent = env.toLowerCase();
+      deployEnvVars = [];
+      renderDeployEnv();
+      $('#selDatabase').value = '';
+      $('#envDetectHint').classList.add('hidden');
     }
     function openDeploy(opts) {
       resetDeploy(opts);
@@ -3197,26 +3375,70 @@
         }
       });
 
-      // Custom database dropdown (keyboard: Arrow/Enter/Escape)
-      $('#dbSelect').addEventListener('click', function () { setDbOpen(!dbOpen); });
-      $('#dbSelect').addEventListener('keydown', function (e) {
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setDbOpen(true); }
-        else if (e.key === 'Escape' && dbOpen) { e.stopPropagation(); setDbOpen(false); }
+      // Deploy modal env vars
+      $('#btnDeployAddEnv').addEventListener('click', function () {
+        deployEnvVars.push({ k: '', v: '' });
+        renderDeployEnv();
+        const ks = $$('[data-deploy-env-k]');
+        if (ks.length) ks[ks.length - 1].focus();
       });
-      $('#dbMenu').addEventListener('keydown', function (e) {
-        const n = $$('.db-opt').length;
-        if (e.key === 'ArrowDown') { e.preventDefault(); dbActive = Math.min(n - 1, dbActive + 1); highlightDb(); }
-        else if (e.key === 'ArrowUp') { e.preventDefault(); dbActive = Math.max(0, dbActive - 1); highlightDb(); }
-        else if (e.key === 'Enter') { e.preventDefault(); chooseDb(dbActive); }
-        else if (e.key === 'Escape') { e.stopPropagation(); setDbOpen(false); $('#dbSelect').focus(); }
+
+      $('#deployEnvList').addEventListener('click', function (e) {
+        const b = e.target.closest('[data-deploy-env-del]');
+        if (!b) return;
+        deployEnvVars.splice(Number(b.dataset.deployEnvDel), 1);
+        renderDeployEnv();
       });
-      $('#dbMenu').addEventListener('click', function (e) {
-        const o = e.target.closest('.db-opt');
-        if (o) chooseDb($$('.db-opt').indexOf(o));
+
+      $('#deployEnvList').addEventListener('input', function (e) {
+        const t = e.target;
+        if (t.dataset.deployEnvK != null) deployEnvVars[Number(t.dataset.deployEnvK)].k = t.value;
+        else if (t.dataset.deployEnvV != null) deployEnvVars[Number(t.dataset.deployEnvV)].v = t.value;
       });
-      document.addEventListener('click', function (e) {
-        if (dbOpen && !$('#dbWrap').contains(e.target)) setDbOpen(false);
+
+      // Auto-detect .env when user picks a folder
+      $('#inpLocalFiles').addEventListener('change', async function () {
+        if (!this.files.length) return;
+        const detected = await detectEnvFromFiles(this.files);
+        if (!detected.length) return;
+        const existing = new Set(deployEnvVars.filter(function (e) { return e.k; }).map(function (e) { return e.k; }));
+        let added = 0;
+        detected.forEach(function (e) {
+          if (!existing.has(e.k)) { deployEnvVars.push(e); added++; }
+        });
+        if (added) {
+          renderDeployEnv();
+          $('#envDetectHint').classList.remove('hidden');
+          toast('success', 'Env detected', 'Imported ' + added + ' variable(s) from .env');
+        }
       });
+
+      // Edit Env modal
+      $('#btnEditEnvX').addEventListener('click', function () { closeModal('modalEditEnv'); });
+      $('#btnEditEnvCancel').addEventListener('click', function () { closeModal('modalEditEnv'); });
+      $('#btnEditEnvSave').addEventListener('click', saveEditEnvAndRedeploy);
+
+      $('#btnEditEnvAdd').addEventListener('click', function () {
+        _editEnvVars.push({ k: '', v: '' });
+        renderEditEnv();
+        const ks = $$('[data-edit-env-k]');
+        if (ks.length) ks[ks.length - 1].focus();
+      });
+
+      $('#editEnvList').addEventListener('click', function (e) {
+        const b = e.target.closest('[data-edit-env-del]');
+        if (!b) return;
+        _editEnvVars.splice(Number(b.dataset.editEnvDel), 1);
+        renderEditEnv();
+      });
+
+      $('#editEnvList').addEventListener('input', function (e) {
+        const t = e.target;
+        if (t.dataset.editEnvK != null) _editEnvVars[Number(t.dataset.editEnvK)].k = t.value;
+        else if (t.dataset.editEnvV != null) _editEnvVars[Number(t.dataset.editEnvV)].v = t.value;
+      });
+
+
 
       // OAuth modal
       $('#btnOAuthX').addEventListener('click', function () { closeModal('modalOAuth'); });
