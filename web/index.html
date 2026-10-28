@@ -103,12 +103,6 @@
     }
 
     /* Custom dropdown: 120ms */
-    .dd-menu {
-      opacity: 0;
-      transform: translateY(-2px) scale(.98);
-      transition: opacity .12s ease-out, transform .12s ease-out;
-      pointer-events: none;
-    }
 
     .dd-menu.is-open {
       opacity: 1;
@@ -117,11 +111,6 @@
     }
 
     /* Conditional DATABASE_URL field: smooth height animation via grid rows */
-    .collapse-grid {
-      display: grid;
-      grid-template-rows: 0fr;
-      transition: grid-template-rows .2s ease-out;
-    }
 
     .collapse-grid>div {
       overflow: hidden;
@@ -1469,14 +1458,6 @@
       }, 60000);
     }
 
-
-
-    function restartResourceMonitoring() {
-      if (_resWsCpu || _resWsRam || _resWsDisk) {
-        closeAllResourceWs();
-        startResourceMonitoring();
-      }
-    }
     function updateUserProfileUI(user) {
       const initials = (user.name || user.login || 'U').slice(0, 2).toUpperCase();
       const avatarEl = $('#sidebarAvatar');
@@ -1693,7 +1674,7 @@
       }
       w.innerHTML = deployEnvVars.map(function (e, i) {
         return '<div class="flex gap-2">' +
-          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-deploy-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
           '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-deploy-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
           '<button type="button" class="icon-btn shrink-0 border border-line" data-deploy-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
           '</div>';
@@ -2522,7 +2503,7 @@
       }
       w.innerHTML = _editEnvVars.map(function (e, i) {
         return '<div class="flex gap-2">' +
-          '<input type="text" class="input font-mono sm:w-44" value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
+          '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="Letters, digits, underscore. Must start with letter or underscore." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" autocomplete="off" spellcheck="false">' +
           '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-edit-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
           '<button type="button" class="icon-btn shrink-0 border border-line" data-edit-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
           '</div>';
@@ -2849,13 +2830,7 @@
       dirty = true;
       $('#btnSave').disabled = false;
     }
-    function saveSettings(e) {
-      e.preventDefault();
-      if (!dirty) return;
-      dirty = false;
-      $('#btnSave').disabled = true;
-      toast('success', 'Settings saved', 'Deployment defaults updated for acme-org.');
-    }
+
     function toggleSecret() {
       secretShown = !secretShown;
       $('#inpSecret').value = secretShown ? SECRET : SECRET_MASK;
@@ -2989,17 +2964,6 @@
         pn.classList.toggle('hidden', !on);
       });
     }
-    let watchOn = true;
-    function setWatch(v) {
-      watchOn = v;
-      const b = $('#swWatch');
-      b.setAttribute('aria-checked', String(v));
-      b.classList.toggle('bg-accent', v);
-      b.classList.toggle('bg-line', !v);
-      const knob = $('.switch-knob', b);
-      knob.classList.toggle('translate-x-4', v);
-      knob.classList.toggle('translate-x-0', !v);
-    }
 
     // resetDeploy — repopulate deploy modal fields
     function resetDeploy(opts) {
@@ -3018,7 +2982,6 @@
       $('#inpBranch').value = r ? r.defaultBranch : 'main';
       if ($('#selProjectType')) $('#selProjectType').value = '';
 
-      renderDbSelected();
       $('#btnDeploy').disabled = false;
       $('#btnDeployCancel').disabled = false;
       $('#btnDeployX').disabled = false;
