@@ -117,12 +117,37 @@ func (c *ContainerService) RunStaged(
 	return id, tempName, nil
 }
 
-// WaitReadyContainer menunggu container dengan host/alias tertentu bisa diakses.
-// Dipakai untuk health check container baru sebelum di-promote.
+// WaitReadyContainer: host is already a full container name/alias.
 func (c *ContainerService) WaitReadyContainer(
 	ctx context.Context, host string, port int, timeout time.Duration,
 ) error {
-	return c.WaitReady(ctx, host, port, timeout)
+	return waitTCP(ctx, host, port, timeout)
+}
+
+// WaitReady: takes a slug and resolves the canonical container name.
+func (s *ContainerService) WaitReady(ctx context.Context, slug string, port int, timeout time.Duration) error {
+	return waitTCP(ctx, ContainerName(slug), port, timeout)
+}
+
+func waitTCP(ctx context.Context, host string, port int, timeout time.Duration) error {
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	deadline := time.Now().Add(timeout)
+	for {
+		d := net.Dialer{Timeout: 2 * time.Second}
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("app belum merespon di %s: %w", addr, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // Promote menghentikan & menghapus container lama, lalu me-rename container baru
@@ -147,28 +172,6 @@ func (c *ContainerService) Promote(
 	log.Printf("[container] promoted %s → %s", newContainerID[:12], finalName)
 
 	return nil
-}
-
-// WaitReady mencoba koneksi TCP ke app (best-effort; hanya efektif jika backend berada di proxy-net).
-func (s *ContainerService) WaitReady(ctx context.Context, slug string, port int, timeout time.Duration) error {
-	addr := net.JoinHostPort(ContainerName(slug), fmt.Sprintf("%d", port))
-	deadline := time.Now().Add(timeout)
-	for {
-		d := net.Dialer{Timeout: 2 * time.Second}
-		conn, err := d.DialContext(ctx, "tcp", addr)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("app belum merespon di %s: %w", addr, err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
 }
 
 // StreamLogs men-stream log stdout & stderr dari container Docker runtime.
