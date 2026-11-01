@@ -230,9 +230,9 @@ func (w *DeployWorker) pipeline(ctx context.Context, r *run, app *repository.App
 			continue
 		}
 		runEnv = append(runEnv, e.Key+"="+e.Value)
-		if strings.HasPrefix(e.Key, "BP_") { // variabel build-time Paketo
-			buildEnv[e.Key] = e.Value
-		}
+		// Kirim SEMUA env ke buildEnv — strategi yang filter sendiri
+		// (buildEnvLines untuk SPA/React/Vite, Paketo untuk BP_*).
+		buildEnv[e.Key] = e.Value
 	}
 	runEnv = append(runEnv, fmt.Sprintf("PORT=%d", app.Port))
 

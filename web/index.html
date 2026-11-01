@@ -1617,11 +1617,23 @@
 
     async function redeployApp(id) {
       try {
-        await apiFetch('/api/apps/' + id + '/redeploy', { method: 'POST' });
+        // Optimistic: tandai building dulu
+        const i = CONTAINERS.findIndex(function (c) { return c.id === id; });
+        if (i > -1) { CONTAINERS[i].status = 'Building'; renderRoute(); }
+
+        const res = await apiFetch('/api/apps/' + id + '/redeploy', { method: 'POST' });
         toast('success', 'Redeploy triggered', 'New build queued for ' + id + '.');
-        pollUntilNotBuilding(id);
+
+        // Tampilkan progress panel — status build visible
+        const c = CONTAINERS.find(function (x) { return String(x.id) === String(id); });
+        const slug = c ? c.slug : 'app';
+        const depId = res && res.deployment_id ? res.deployment_id : null;
+        dpStart(id, slug, depId, c ? c.sourceType : 'upload');
+
       } catch (err) {
         toast('danger', 'Redeploy failed', err.message);
+        const i = CONTAINERS.findIndex(function (c) { return c.id === id; });
+        if (i > -1) { CONTAINERS[i].status = 'Running'; renderRoute(); }
       }
     }
 
@@ -2786,10 +2798,19 @@
       try {
         await apiFetch('/api/apps/' + _editEnvAppId + '/env', { method: 'PUT', body: payload });
         $('#editEnvLabel').textContent = 'Redeploying…';
-        await apiFetch('/api/apps/' + _editEnvAppId + '/redeploy', { method: 'POST' });
+
+        // Panggil redeploy — API akan kembalikan deployment_id
+        const res = await apiFetch('/api/apps/' + _editEnvAppId + '/redeploy', { method: 'POST' });
+
         toast('success', 'Env saved', 'Redeploy queued for ' + _editEnvAppId + '.');
         closeModal('modalEditEnv');
-        pollUntilNotBuilding(_editEnvAppId);
+
+        // Tampilkan deploy progress panel (BUKAN pollUntilNotBuilding)
+        const c = CONTAINERS.find(function (x) { return String(x.id) === String(_editEnvAppId); });
+        const slug = c ? c.slug : 'app';
+        const depId = res && res.deployment_id ? res.deployment_id : null;
+        dpStart(_editEnvAppId, slug, depId, c ? c.sourceType : 'upload');
+
       } catch (e) {
         toast('danger', 'Save failed', e.message);
         $('#btnEditEnvSave').disabled = false;
