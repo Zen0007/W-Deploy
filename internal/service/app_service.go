@@ -190,8 +190,17 @@ func (s *AppService) Prepare(ctx context.Context, in AppInput) (*repository.App,
 		fields := map[string]any{
 			"name": name, "source_type": string(in.SourceType), "repo_url": repoURL,
 			"branch": in.Branch, "buildpack": in.Buildpack, "port": in.Port,
-			"github_full_name": in.RepoFull, "auto_deploy": auto,
+			"auto_deploy": auto,
 		}
+
+		// ✅ PERBAIKAN: Hanya update github_full_name jika source type-nya GitHub
+		if in.SourceType == constants.SourceGitHub {
+			fields["github_full_name"] = in.RepoFull
+		} else {
+			// Opsional: Jika pindah ke ZIP, kosongkan URL git agar tidak bingung
+			fields["repo_url"] = ""
+		}
+
 		if err := s.apps.Update(ctx, app.ID, fields); err != nil {
 			return nil, nil, fmt.Errorf("update app: %w", err)
 		}

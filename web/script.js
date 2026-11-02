@@ -5,7 +5,6 @@ const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
 const cap = s => s[0].toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const T = s => new Date(s).getTime();
 const pad2 = n => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtDateTime(ts) {
@@ -556,25 +555,33 @@ async function redeployApp(id) {
     }
 }
 
-/** Poll /api/apps/{id} every 4s until status is no longer Building/Restarting. */
-function pollUntilNotBuilding(id) {
-    const timer = setInterval(async function () {
-        try {
-            const a = await apiFetch('/api/apps/' + id);
-            const s = normaliseStatus(a.status);
-            const i = CONTAINERS.findIndex(function (c) { return c.id === id; });
-            if (i > -1) { CONTAINERS[i] = normaliseApp(a); renderRoute(); }
-            if (s !== 'Building' && s !== 'Restarting') clearInterval(timer);
-        } catch (_) { clearInterval(timer); }
-    }, 4000);
-}
-
 // ─── Deployments ─────────────────────────────────────────────────────────────
+function fmtDuration(sec) {
+    if (sec == null || isNaN(sec)) return '—';
+    sec = Math.floor(sec);
+    if (sec < 60) return sec + 's';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60);
+    const rm = m % 60;
+    return h + 'h ' + rm + 'm';
+}
 
 function normaliseDeploy(d) {
     let rawStatus = cap(d.status || 'unknown');
-    // Backend stores final success as 'running', map to 'Success' for display
     if (rawStatus === 'Running') rawStatus = 'Success';
+
+    // ── Hitung durasi ──────────────────────────────────────────
+    let duration = '—';
+    if (typeof d.duration_sec === 'number' && d.duration_sec > 0) {
+        duration = fmtDuration(d.duration_sec);
+    } else if (d.started_at && d.finished_at) {
+        const diffMs = new Date(d.finished_at).getTime() - new Date(d.started_at).getTime();
+        if (diffMs >= 0) duration = fmtDuration(Math.floor(diffMs / 1000));
+    }
+    // ───────────────────────────────────────────────────────────
+
     return {
         id: d.id,
         sha: (d.commit_sha || d.sha || '').slice(0, 7),
@@ -583,7 +590,7 @@ function normaliseDeploy(d) {
         branch: d.branch || 'main',
         provider: 'github',
         status: rawStatus,
-        duration: d.duration || '—',
+        duration: duration,
         ts: d.created_at ? new Date(d.created_at).getTime() : Date.now()
     };
 }
@@ -593,12 +600,13 @@ async function fetchAllDeploys() {
     if (!CONTAINERS.length) return;
     try {
         const results = await Promise.all(
-            CONTAINERS.map(function (c) {
-                return apiFetch('/api/apps/' + c.id + '/deployments')
-                    .then(function (res) {
-                        return Array.isArray(res) ? res : (res && Array.isArray(res.deployments) ? res.deployments : []);
-                    })
-                    .catch(function () { return []; });
+            CONTAINERS.map(async function (c) {
+                try {
+                    const res = await apiFetch('/api/apps/' + c.id + '/deployments');
+                    return Array.isArray(res) ? res : (res && Array.isArray(res.deployments) ? res.deployments : []);
+                } catch {
+                    return [];
+                }
             })
         );
         DEPLOYS = results
@@ -615,19 +623,100 @@ async function fetchAllDeploys() {
 // ─── Deploy-modal env state ─────────────────────────────────────────
 let deployEnvVars = [];  // {k, v}
 
+// ─── Env draft (mirror ke storage) ──────────────────────────────────
+// Setiap perubahan baris env disalin ke storage. Kalau state di memori
+// ternyata hilang/kosong saat user klik Add, baris dipulihkan dari sini.
+// Ganti ke window.sessionStorage kalau tidak mau draft bertahan setelah tab ditutup.
+const ENV_DRAFT_STORE = (function () { try { return window.localStorage; } catch (e) { return null; } })();
+const ENV_DRAFT_PREFIX = 'wdeploy:env-draft:';
+
+function envDraftRead(ctx) {
+    if (!ENV_DRAFT_STORE) return null;
+    try {
+        const raw = ENV_DRAFT_STORE.getItem(ENV_DRAFT_PREFIX + ctx);
+        const arr = raw ? JSON.parse(raw) : null;
+        if (!Array.isArray(arr)) return null;
+        return arr.map(function (r) { return { k: String((r && r.k) || ''), v: String((r && r.v) || '') }; });
+    } catch (e) { return null; }
+}
+function envDraftWrite(ctx, rows) {
+    if (!ENV_DRAFT_STORE) return;
+    try {
+        ENV_DRAFT_STORE.setItem(ENV_DRAFT_PREFIX + ctx, JSON.stringify(rows.map(function (r) {
+            return { k: r.k || '', v: r.v == null ? '' : String(r.v) };
+        })));
+    } catch (e) { /* storage penuh / diblokir: abaikan */ }
+}
+function envDraftClear(ctx) {
+    if (!ENV_DRAFT_STORE) return;
+    try { ENV_DRAFT_STORE.removeItem(ENV_DRAFT_PREFIX + ctx); } catch (e) { }
+}
+function envHasContent(rows) {
+    return rows.some(function (r) { return (r.k || '').trim() || (r.v || '').trim(); });
+}
+// Kalau state kosong tapi draft punya isi, pulihkan draft (dan beri tahu di console).
+function envRecover(ctx, rows) {
+    if (envHasContent(rows)) return rows;
+    const saved = envDraftRead(ctx);
+    if (saved && envHasContent(saved)) {
+        console.warn('[env] state kosong, dipulihkan dari draft:', ctx);
+        return saved;
+    }
+    return rows;
+}
+
+function deployEnvRowHtml(e, i) {
+    return '<div class="flex gap-2" data-env-row>' +
+        '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" ' +
+        'id="deployEnvKey-' + i + '" name="deployEnvKey-' + i + '" ' +
+        'aria-label="Environment variable key ' + (i + 1) + '" ' +
+        'value="' + esc(e.k || '') + '" ' +
+        'data-deploy-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" ' +
+        'autocomplete="off" spellcheck="false">' +
+        '<input type="text" class="input flex-1 font-mono" ' +
+        'id="deployEnvValue-' + i + '" name="deployEnvValue-' + i + '" ' +
+        'aria-label="Environment variable value ' + (i + 1) + '" ' +
+        'value="' + esc(e.v || '') + '" ' +
+        'data-deploy-env-v="' + i + '" placeholder="value" ' +
+        'autocomplete="off" spellcheck="false">' +
+        '<button type="button" class="icon-btn shrink-0 border border-line" ' +
+        'data-deploy-env-del="' + i + '" aria-label="Remove variable ' + (i + 1) + '">' +
+        svgIcon('x', 'h-4 w-4') + '</button>' +
+        '</div>';
+}
+
 function renderDeployEnv() {
     const w = $('#deployEnvList');
     if (!deployEnvVars.length) {
         w.innerHTML = '<p class="rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-zinc-500">No variables yet — click Add or upload a folder with <code class="rounded bg-panel px-1">.env</code>.</p>';
         return;
     }
-    w.innerHTML = deployEnvVars.map(function (e, i) {
-        return '<div class="flex gap-2">' +
-            '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="..." value="' + esc(e.k) + '" data-deploy-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
-            '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-deploy-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
-            '<button type="button" class="icon-btn shrink-0 border border-line" data-deploy-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
-            '</div>';
-    }).join('');
+    w.innerHTML = deployEnvVars.map(deployEnvRowHtml).join('');
+}
+
+// Tambah baris TANPA membangun ulang list, jadi input yang sudah diisi tidak ikut terhapus.
+function appendDeployEnvRow() {
+    const w0 = $('#deployEnvList');
+    const nodesBefore = Array.from(w0.querySelectorAll('[data-env-row]'));
+
+    syncDeployEnvFromDOM();
+    deployEnvVars = envRecover('deploy', deployEnvVars);
+    deployEnvVars.push({ k: '', v: '' });
+    envDraftWrite('deploy', deployEnvVars);
+
+    const w = $('#deployEnvList');
+    const i = deployEnvVars.length - 1;
+    if (!w.querySelector('[data-deploy-env-k]')) w.innerHTML = '';
+    w.insertAdjacentHTML('beforeend', deployEnvRowHtml(deployEnvVars[i], i));
+
+    const nodesAfter = Array.from(w.querySelectorAll('[data-env-row]'));
+    console.log('[add] preserved rows:',
+        nodesBefore.every(function (n, idx) { return n === nodesAfter[idx]; }),
+        'before:', nodesBefore.length, 'after:', nodesAfter.length,
+        'state:', JSON.parse(JSON.stringify(deployEnvVars)));
+
+    const ks = $$('[data-deploy-env-k]', w);
+    if (ks.length) ks[ks.length - 1].focus();
 }
 
 function parseEnvContent(text) {
@@ -951,6 +1040,10 @@ function _dpCleanup() {
     if (_dp.autoDismiss) { clearTimeout(_dp.autoDismiss); _dp.autoDismiss = null; }
     if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
     _dp.isRunning = false;
+    _dp.appId = null;
+    _dp.depId = null;
+    _dp.appSlug = null;
+    _dp.lastIdx = 0;
 }
 
 // ── Elapsed counter ───────────────────────────────────────────────────────────
@@ -979,7 +1072,7 @@ function _dpAppendLog(line) {
 
 // ── Final handlers (Success / Failure) ────────────────────────────────────────
 function _dpOnSuccess(url, duration) {
-    if (!_dp.isRunning && !_dp.appSlug) return;
+    if (!_dp.isRunning) return;
     _dp.isRunning = false;
     if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
     if (_dp.ws) { try { _dp.ws.close(); } catch (_) { } _dp.ws = null; }
@@ -1004,7 +1097,7 @@ function _dpOnSuccess(url, duration) {
 }
 
 function _dpOnFailure(errorMsg, status) {
-    if (!_dp.isRunning && !_dp.appSlug) return;
+    if (!_dp.isRunning) return;
     _dp.isRunning = false;
     if (_dp.pollTimer) { clearInterval(_dp.pollTimer); _dp.pollTimer = null; }
     if (_dp.ws) { try { _dp.ws.close(); } catch (_) { } _dp.ws = null; }
@@ -1062,23 +1155,24 @@ function dpStart(appId, appSlug, deploymentId, sourceType) {
     _dp.appSlug = appSlug;
     _dp.isRunning = true;
 
-    // Deskripsi awal sesuai tipe source
     let initialSub = 'Preparing source code…';
     if (sourceType === 'upload') initialSub = 'Uploading folder to server…';
     else if (sourceType === 'github') initialSub = 'Cloning GitHub repository…';
     else if (sourceType === 'local') initialSub = 'Reading server local folder…';
 
-    // Reset UI
     $('#dpLog').textContent = '';
     $('#dpElapsed').textContent = '';
     $('#dpTitle').textContent = 'Deploying ' + appSlug + '…';
     $('#dpSub').textContent = initialSub;
 
     const headerIcon = $('#dpHeaderIcon');
-    headerIcon.className = 'h-4 w-4 text-accent dp-spinning';
-    headerIcon.setAttribute('stroke', 'currentColor');
+    if (headerIcon) {
+        // ✅ SVG: pakai setAttribute, BUKAN .className
+        headerIcon.setAttribute('class', 'h-4 w-4 text-accent dp-spinning');
+        headerIcon.setAttribute('stroke', 'currentColor');
+    }
 
-    _dpRenderSteps(0, false, false); // Mulai dari step 0 (Source)
+    _dpRenderSteps(0, false, false);
     dpShow();
     _dpStartElapsed();
 
@@ -1192,6 +1286,7 @@ async function deployNow() {
     // Collect env vars (skip empty keys)
     const envMap = {};
     let invalidEnv = null;
+    syncDeployEnvFromDOM();
     deployEnvVars.forEach(function (e) {
         const k = (e.k || '').trim();
         if (!k) return;
@@ -1272,15 +1367,21 @@ async function deployNow() {
             headers: headers
         });
 
+        envDraftClear('deploy');
         closeModal('modalDeploy');
         toast('success', 'Deployment queued', (isImp ? repoVal + '@' + branch : (isUpload ? 'Uploaded files' : localPath)) + ' · building…');
 
-        // Tampilkan progress panel
         if (deployResp && deployResp.app && deployResp.app.id) {
             const slug = deployResp.app.slug || deployResp.app.name || 'app';
             const depId = deployResp.deployment_id;
             const sourceType = isImp ? 'github' : (isUpload ? 'upload' : 'local');
-            dpStart(deployResp.app.id, slug, depId, sourceType);
+
+            try {
+                dpStart(deployResp.app.id, slug, depId, sourceType);
+            } catch (uiErr) {
+                // Deploy SUDAH sukses di server — hanya panel UI yang gagal
+                console.error('[deploy] progress panel error (deploy tetap sukses):', uiErr);
+            }
         }
 
         await fetchApps();
@@ -1324,6 +1425,7 @@ async function saveEnvVars(appId) {
 
         await apiFetch('/api/apps/' + appId + '/env', { method: 'PUT', body: payload });
         toast('success', 'Env vars saved', 'Environment updated for ' + appId + '.');
+        envDraftClear(settingsEnvCtx());
         dirty = false;
         $('#btnSave').disabled = true;
     } catch (err) {
@@ -1335,7 +1437,10 @@ async function deleteEnvVar(appId, key) {
     try {
         await apiFetch('/api/apps/' + appId + '/env/' + encodeURIComponent(key), { method: 'DELETE' });
         toast('success', 'Variable removed', key + ' deleted.');
-        await fetchEnvVars(appId);
+        // Hapus hanya baris itu; jangan refetch supaya baris lain yang belum disimpan tidak hilang.
+        envVars = envVars.filter(function (e) { return e.k !== key; });
+        envDraftWrite(settingsEnvCtx(), envVars);
+        renderEnvVars();
     } catch (err) {
         toast('danger', 'Delete failed', err.message);
     }
@@ -1582,32 +1687,40 @@ function containerAction(act, id) {
 let _editEnvAppId = null;
 let _editEnvVars = [];
 let _editEnvBusy = false;
+let _editEnvLoading = false;
+let _editEnvReqId = 0;
 
 async function openEditEnv(appId) {
     const c = CONTAINERS.find(function (x) { return String(x.id) === String(appId); });
     if (!c) return;
 
+    const reqId = ++_editEnvReqId;
     _editEnvAppId = appId;
     _editEnvVars = [];
-    _editEnvBusy = false;
+    envDraftClear('edit:' + appId);   // sumber awal = server, draft lama dibuang
+    _editEnvLoading = true;
     $('#editEnvSub').textContent = c.service + ' · ' + c.id;
     $('#editEnvList').innerHTML = '<p class="text-xs text-zinc-500 py-2">Loading…</p>';
     $('#btnEditEnvSave').disabled = true;
-    $('#btnEditEnvCancel').disabled = true;
+    $('#btnEditEnvCancel').disabled = false;
     $('#editEnvSpin').classList.add('hidden');
     $('#editEnvLabel').textContent = 'Save & redeploy';
     openModal('modalEditEnv');
 
     try {
         const data = await apiFetch('/api/apps/' + appId + '/env');
+        if (reqId !== _editEnvReqId) return;
         _editEnvVars = normalizeEnvResponse(data);
         if (!_editEnvVars.length) _editEnvVars = [{ k: '', v: '' }];
     } catch (e) {
+        if (reqId !== _editEnvReqId) return;
         toast('danger', 'Env load failed', e.message);
         _editEnvVars = [{ k: '', v: '' }];
     }
+    if (reqId !== _editEnvReqId) return;
+    _editEnvLoading = false;
     renderEditEnv();
-    $('#btnEditEnvSave').disabled = false;
+    $('#btnEditEnvSave').disabled = _editEnvBusy;
     $('#btnEditEnvCancel').disabled = false;
 }
 
@@ -1671,25 +1784,61 @@ function normalizeEnvResponse(data) {
         });
 }
 
+function editEnvRowHtml(e, i) {
+    return '<div class="flex gap-2" data-env-row>' +
+        '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" ' +
+        'id="editEnvKey-' + i + '" name="editEnvKey-' + i + '" ' +
+        'aria-label="Environment variable key ' + (i + 1) + '" ' +
+        'value="' + esc(e.k || '') + '" ' +
+        'data-edit-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" ' +
+        'autocomplete="off" spellcheck="false">' +
+        '<input type="text" class="input flex-1 font-mono" ' +
+        'id="editEnvValue-' + i + '" name="editEnvValue-' + i + '" ' +
+        'aria-label="Environment variable value ' + (i + 1) + '" ' +
+        'value="' + esc(e.v || '') + '" ' +
+        'data-edit-env-v="' + i + '" placeholder="value" ' +
+        'autocomplete="off" spellcheck="false">' +
+        '<button type="button" class="icon-btn shrink-0 border border-line" ' +
+        'data-edit-env-del="' + i + '" aria-label="Remove variable ' + (i + 1) + '">' +
+        svgIcon('x', 'h-4 w-4') + '</button>' +
+        '</div>';
+}
+
 function renderEditEnv() {
     const w = $('#editEnvList');
     if (!_editEnvVars.length) {
         w.innerHTML = '<p class="rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-zinc-500">No variables. Click Add to create one.</p>';
         return;
     }
-    w.innerHTML = _editEnvVars.map(function (e, i) {
-        return '<div class="flex gap-2">' +
-            '<input type="text" class="input font-mono sm:w-44" pattern="[A-Za-z_][A-Za-z0-9_]*" title="..." value="' + esc(e.k) + '" data-edit-env-k="' + i + '" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
-            '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-edit-env-v="' + i + '" placeholder="value" autocomplete="off" spellcheck="false">' +
-            '<button type="button" class="icon-btn shrink-0 border border-line" data-edit-env-del="' + i + '" aria-label="Remove variable">' + svgIcon('x', 'h-4 w-4') + '</button>' +
-            '</div>';
-    }).join('');
+    w.innerHTML = _editEnvVars.map(editEnvRowHtml).join('');
+}
+
+function appendEditEnvRow() {
+    if (_editEnvLoading || !_editEnvAppId) return;
+    const ctx = 'edit:' + _editEnvAppId;
+    syncEditEnvFromDOM();
+    _editEnvVars = envRecover(ctx, _editEnvVars);
+    _editEnvVars.push({ k: '', v: '' });
+    envDraftWrite(ctx, _editEnvVars);
+
+    const w = $('#editEnvList');
+    const i = _editEnvVars.length - 1;
+    if (!w.querySelector('[data-edit-env-k]')) w.innerHTML = '';
+    w.insertAdjacentHTML('beforeend', editEnvRowHtml(_editEnvVars[i], i));
+
+    const ks = $$('[data-edit-env-k]', w);
+    if (ks.length) ks[ks.length - 1].focus();
 }
 
 async function saveEditEnvAndRedeploy() {
     if (_editEnvBusy || !_editEnvAppId) return;
 
+    syncEditEnvFromDOM();          // ← tambahan, supaya save selalu pakai nilai DOM
+    const appId = _editEnvAppId;
+    const reqId = _editEnvReqId;
     // Validasi key dulu — sebelum sentuh server
+
+
     let invalidKey = null;
     for (let i = 0; i < _editEnvVars.length; i++) {
         const k = (_editEnvVars[i].k || '').trim();
@@ -1699,6 +1848,8 @@ async function saveEditEnvAndRedeploy() {
         toast('danger', 'Invalid env key', '"' + invalidKey + '" — hanya A-Z, a-z, 0-9, _. Tidak boleh mulai angka.');
         return;
     }
+
+    _editEnvBusy = true;
     $('#btnEditEnvSave').disabled = true;
     $('#btnEditEnvCancel').disabled = true;
     $('#editEnvSpin').classList.remove('hidden');
@@ -1715,29 +1866,40 @@ async function saveEditEnvAndRedeploy() {
 
 
     try {
-        await apiFetch('/api/apps/' + _editEnvAppId + '/env', { method: 'PUT', body: payload });
-        $('#editEnvLabel').textContent = 'Redeploying…';
+        try {
+            await apiFetch('/api/apps/' + appId + '/env', { method: 'PUT', body: payload });
+            envDraftClear('edit:' + appId);
+        } catch (e) {
+            toast('danger', 'Save failed', e.message);
+            return;
+        }
 
-        // Panggil redeploy — API akan kembalikan deployment_id
-        const res = await apiFetch('/api/apps/' + _editEnvAppId + '/redeploy', { method: 'POST' });
+        if (reqId === _editEnvReqId) $('#editEnvLabel').textContent = 'Redeploying…';
 
-        toast('success', 'Env saved', 'Redeploy queued for ' + _editEnvAppId + '.');
-        closeModal('modalEditEnv');
+        let res;
+        try {
+            res = await apiFetch('/api/apps/' + appId + '/redeploy', { method: 'POST' });
+        } catch (e) {
+            toast('danger', 'Redeploy failed', 'Env for ' + appId + ' was saved, but redeploy failed: ' + e.message);
+            return;
+        }
 
-        // Tampilkan deploy progress panel (BUKAN pollUntilNotBuilding)
-        const c = CONTAINERS.find(function (x) { return String(x.id) === String(_editEnvAppId); });
+        toast('success', 'Env saved', 'Redeploy queued for ' + appId + '.');
+        if (reqId === _editEnvReqId) closeModal('modalEditEnv');
+
+        const c = CONTAINERS.find(function (x) { return String(x.id) === String(appId); });
         const slug = c ? c.slug : 'app';
         const depId = res && res.deployment_id ? res.deployment_id : null;
-        dpStart(_editEnvAppId, slug, depId, c ? c.sourceType : 'upload');
-
-    } catch (e) {
-        toast('danger', 'Save failed', e.message);
-        $('#btnEditEnvSave').disabled = false;
-        $('#btnEditEnvCancel').disabled = false;
-        $('#editEnvSpin').classList.add('hidden');
-        $('#editEnvLabel').textContent = 'Save & redeploy';
+        dpStart(appId, slug, depId, c ? c.sourceType : 'upload');
     } finally {
         _editEnvBusy = false;
+        const modal = $('#modalEditEnv');
+        if (modal && !modal.classList.contains('hidden')) {
+            $('#btnEditEnvSave').disabled = _editEnvLoading;
+            $('#btnEditEnvCancel').disabled = false;
+            $('#editEnvSpin').classList.add('hidden');
+            if (!_editEnvLoading) $('#editEnvLabel').textContent = 'Save & redeploy';
+        }
     }
 }
 // Overview (real data from CONTAINERS + DEPLOYS)
@@ -1843,7 +2005,6 @@ function confirmBox(p) {
 function providerCard(p) {
     const conn = connections[p];
     const name = providerName(p);
-    const domain = p === 'github' ? 'github.com' : 'gitlab.com';
     const sub = p === 'github'
         ? 'Import repositories from github.com and deploy on every push.'
         : 'Connect gitlab.com to import projects and mirror pipelines.';
@@ -1973,7 +2134,7 @@ function confirmOAuth() {
             connected: true,
             account: '@acme-org',
             scopes: picked.join(', '),
-            date: fmtDateTime(MOCK_NOW),
+            date: fmtDateTime(Date.now()),
             needsReconnect: false
         };
         toast('success', providerName(oauthP) + ' connected', 'Repositories are now being synced.');
@@ -1989,24 +2150,49 @@ function confirmOAuth() {
 
 // Settings
 const SECRET = 'whsec_9f2e7c41a8b3d605f1e9';
-const MOCK_NOW = Date.now();
 const SECRET_MASK = 'whsec_' + '·'.repeat(16);
 let secretShown = false;
+
+function settingsEnvRowHtml(e, i) {
+    return '<div class="flex flex-col gap-2 sm:flex-row">' +
+        '<input type="text" class="input font-mono sm:w-56" ' +
+        'id="settingsEnvKey-' + i + '" name="settingsEnvKey-' + i + '" ' +
+        'aria-label="Workspace variable name ' + (i + 1) + '" ' +
+        'value="' + esc(e.k || '') + '" data-var-k="' + i + '" ' +
+        'placeholder="KEY" list="envKeySuggestions" ' +
+        'autocomplete="off" spellcheck="false">' +
+        '<input type="text" class="input flex-1 font-mono" ' +
+        'id="settingsEnvValue-' + i + '" name="settingsEnvValue-' + i + '" ' +
+        'aria-label="Workspace variable value ' + (i + 1) + '" ' +
+        'value="' + esc(e.v || '') + '" data-var-v="' + i + '" ' +
+        'placeholder="value" autocomplete="off" spellcheck="false">' +
+        '<button type="button" class="icon-btn shrink-0 self-start border border-line" ' +
+        'data-var-del="' + i + '" aria-label="Remove variable ' + (i + 1) + '">' +
+        svgIcon('x', 'h-4 w-4') + '</button>' +
+        '</div>';
+}
+
 function renderEnvVars() {
     const w = $('#envList');
     if (!envVars.length) {
         w.innerHTML = '<p class="rounded-lg border border-line bg-subtle px-3 py-3 text-xs text-zinc-500">No environment variables. New containers will start with platform defaults only.</p>';
         return;
     }
-    w.innerHTML = envVars.map(function (e, i) {
-        return '<div class="flex flex-col gap-2 sm:flex-row">' +
-            '<input type="text" class="input font-mono sm:w-56" value="' + esc(e.k) + '" data-var-k="' + i + '" aria-label="Variable name" placeholder="KEY" list="envKeySuggestions" autocomplete="off" spellcheck="false">' +
-            '<input type="text" class="input flex-1 font-mono" value="' + esc(e.v) + '" data-var-v="' + i + '" aria-label="Variable value" placeholder="value" autocomplete="off" spellcheck="false">' +
-            '<button type="button" class="icon-btn shrink-0 self-start border border-line" data-var-del="' + i + '" aria-label="Remove ' + (esc(e.k) || 'variable') + '">' + svgIcon('x', 'h-4 w-4') + '</button>' +
-            '</div>';
-    }).join('');
+    w.innerHTML = envVars.map(settingsEnvRowHtml).join('');
+}
+
+function settingsEnvCtx() { return 'settings:' + (currentAppId || 'workspace'); }
+function syncSettingsEnvFromDOM() {
+    const w = $('#envList');
+    $$('[data-var-k]', w).forEach(function (inp) { const r = envVars[Number(inp.dataset.varK)]; if (r) r.k = inp.value; });
+    $$('[data-var-v]', w).forEach(function (inp) { const r = envVars[Number(inp.dataset.varV)]; if (r) r.v = inp.value; });
 }
 function renderSettings() {
+    let restored = false;
+    if (!envHasContent(envVars)) {
+        const saved = envDraftRead(settingsEnvCtx());
+        if (saved && envHasContent(saved)) { envVars = saved; restored = true; }
+    }
     renderEnvVars();
     secretShown = false;
     $('#inpSecret').value = SECRET_MASK;
@@ -2014,8 +2200,8 @@ function renderSettings() {
     $('#btnReveal').setAttribute('aria-label', 'Reveal webhook secret');
     $('#icoEye').classList.remove('hidden');
     $('#icoEyeOff').classList.add('hidden');
-    dirty = false;
-    $('#btnSave').disabled = true;
+    dirty = restored;
+    $('#btnSave').disabled = !restored;
 }
 function markDirty() {
     dirty = true;
@@ -2077,6 +2263,10 @@ function openModal(id) {
 function closeModal(id) {
     const ov = document.getElementById(id);
     if (!ov || ov.classList.contains('hidden')) return;
+    if (id === 'modalEditEnv') {
+        _editEnvReqId++;
+        _editEnvLoading = false;
+    }
     ov.classList.remove('is-open');
     const i = modalStack.indexOf(id);
     if (i > -1) modalStack.splice(i, 1);
@@ -2180,6 +2370,7 @@ function resetDeploy(opts) {
     $('#deployLabel').textContent = 'Deploy';
     $('#deployEnvLabel').textContent = env.toLowerCase();
     deployEnvVars = [];
+    envDraftClear('deploy');      // mulai bersih: jangan bawa env app lain
     renderDeployEnv();
     $('#selDatabase').value = '';
     $('#envDetectHint').classList.add('hidden');
@@ -2196,8 +2387,6 @@ function openDeploy(opts) {
 //   /api/ws/resource/ram  → {total, used, free, available, percent, swap_total, swap_used, swap_percent}
 //   /api/ws/resource/disk → {total, used, free, percent, partitions:[...]}
 // Every message is a full JSON snapshot — no delta handling required.
-
-const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Helpers
 function fmtMB(mb) {
@@ -2279,9 +2468,9 @@ function setDiskMetrics(data) {
 // Browser tidak bisa mengirim header Authorization pada handshake WS,
 // jadi backend membaca token dari ?token= (lihat middleware.RequireAuth).
 function wsURL(path) {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = 'api.wdeploy.my.id';           // ← host API, bukan location.host
-    let url = proto + '//' + host + path;
+    const apiURL = new URL(API_BASE);
+    const proto = apiURL.protocol === 'https:' ? 'wss:' : 'ws:';
+    let url = proto + '//' + apiURL.host + path;
     if (sessionToken) {
         url += (path.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(sessionToken);
     }
@@ -2486,6 +2675,29 @@ function mainClick(e) {
     }
 }
 
+// Helper to read active DOM values into state before re-rendering
+function syncEditEnvFromDOM() {
+    const kInputs = $$('[data-edit-env-k]', $('#editEnvList'));
+    const vInputs = $$('[data-edit-env-v]', $('#editEnvList'));
+    kInputs.forEach(function (inp, i) {
+        if (_editEnvVars[i]) _editEnvVars[i].k = inp.value;
+    });
+    vInputs.forEach(function (inp, i) {
+        if (_editEnvVars[i]) _editEnvVars[i].v = inp.value;
+    });
+}
+
+function syncDeployEnvFromDOM() {
+    const kInputs = $$('[data-deploy-env-k]', $('#deployEnvList'));
+    const vInputs = $$('[data-deploy-env-v]', $('#deployEnvList'));
+    kInputs.forEach(function (inp, i) {
+        if (deployEnvVars[i]) deployEnvVars[i].k = inp.value;
+    });
+    vInputs.forEach(function (inp, i) {
+        if (deployEnvVars[i]) deployEnvVars[i].v = inp.value;
+    });
+}
+
 // Init — bind everything once
 function init() {
     $('#skipLink').addEventListener('click', function (e) {
@@ -2538,6 +2750,7 @@ function init() {
         }
 
         // 3. Merge — jangan timpa yang sudah ada manual
+        syncDeployEnvFromDOM();
         const existing = new Set(
             deployEnvVars.filter(function (e) { return e.k; }).map(function (e) { return e.k; })
         );
@@ -2553,6 +2766,7 @@ function init() {
             existing.add(e.k);
             added++;
         });
+        envDraftWrite('deploy', deployEnvVars);
 
         renderDeployEnv();
 
@@ -2566,36 +2780,28 @@ function init() {
     });
 
     // Deploy modal env vars
-    $('#btnDeployAddEnv').addEventListener('click', function () {
-        deployEnvVars.push({ k: '', v: '' });
-        renderDeployEnv();
-        const ks = $$('[data-deploy-env-k]');
-        if (ks.length) ks[ks.length - 1].focus();
-    });
+    $('#btnDeployAddEnv').addEventListener('click', appendDeployEnvRow);
 
     $('#deployEnvList').addEventListener('click', function (e) {
         const b = e.target.closest('[data-deploy-env-del]');
         if (!b) return;
+        syncDeployEnvFromDOM(); // 1. Scrape typed values from DOM
+        deployEnvVars = envRecover('deploy', deployEnvVars);
         deployEnvVars.splice(Number(b.dataset.deployEnvDel), 1);
+        envDraftWrite('deploy', deployEnvVars);   // hapus juga dari storage
         renderDeployEnv();
     });
 
-
-    // Auto-detect .env when user picks a folder
-    $('#inpLocalFiles').addEventListener('change', async function () {
-        if (!this.files.length) return;
-        const detected = await detectEnvFromFiles(this.files);
-        if (!detected.length) return;
-        const existing = new Set(deployEnvVars.filter(function (e) { return e.k; }).map(function (e) { return e.k; }));
-        let added = 0;
-        detected.forEach(function (e) {
-            if (!existing.has(e.k)) { deployEnvVars.push(e); added++; }
-        });
-        if (added) {
-            renderDeployEnv();
-            $('#envDetectHint').classList.remove('hidden');
-            toast('success', 'Env detected', 'Imported ' + added + ' variable(s) from .env');
-        }
+    $('#deployEnvList').addEventListener('input', function (e) {
+        const t = e.target;
+        if (t.dataset.deployEnvK != null) deployEnvVars[Number(t.dataset.deployEnvK)].k = t.value;
+        else if (t.dataset.deployEnvV != null) deployEnvVars[Number(t.dataset.deployEnvV)].v = t.value;
+        envDraftWrite('deploy', deployEnvVars);
+    });
+    // Saat fokus meninggalkan field (blur), simpan ke storage.
+    $('#deployEnvList').addEventListener('focusout', function () {
+        syncDeployEnvFromDOM();
+        envDraftWrite('deploy', deployEnvVars);
     });
 
     // Edit Env modal
@@ -2603,17 +2809,16 @@ function init() {
     $('#btnEditEnvCancel').addEventListener('click', function () { closeModal('modalEditEnv'); });
     $('#btnEditEnvSave').addEventListener('click', saveEditEnvAndRedeploy);
 
-    $('#btnEditEnvAdd').addEventListener('click', function () {
-        _editEnvVars.push({ k: '', v: '' });
-        renderEditEnv();
-        const ks = $$('[data-edit-env-k]');
-        if (ks.length) ks[ks.length - 1].focus();
-    });
+    $('#btnEditEnvAdd').addEventListener('click', appendEditEnvRow);
 
     $('#editEnvList').addEventListener('click', function (e) {
         const b = e.target.closest('[data-edit-env-del]');
         if (!b) return;
+        syncEditEnvFromDOM();          // ← WAJIB, sebelumnya tidak ada
+        const ctx = 'edit:' + _editEnvAppId;
+        _editEnvVars = envRecover(ctx, _editEnvVars);
         _editEnvVars.splice(Number(b.dataset.editEnvDel), 1);
+        envDraftWrite(ctx, _editEnvVars);         // hapus juga dari storage
         renderEditEnv();
     });
 
@@ -2621,6 +2826,12 @@ function init() {
         const t = e.target;
         if (t.dataset.editEnvK != null) _editEnvVars[Number(t.dataset.editEnvK)].k = t.value;
         else if (t.dataset.editEnvV != null) _editEnvVars[Number(t.dataset.editEnvV)].v = t.value;
+        if (_editEnvAppId) envDraftWrite('edit:' + _editEnvAppId, _editEnvVars);
+    });
+    $('#editEnvList').addEventListener('focusout', function () {
+        if (!_editEnvAppId || _editEnvLoading) return;
+        syncEditEnvFromDOM();
+        envDraftWrite('edit:' + _editEnvAppId, _editEnvVars);
     });
 
 
@@ -2656,26 +2867,40 @@ function init() {
         if (currentAppId) {
             saveEnvVars(currentAppId);
         } else {
+            envDraftClear(settingsEnvCtx());
             dirty = false;
             $('#btnSave').disabled = true;
             toast('success', 'Settings saved', 'Workspace defaults updated.');
         }
     });
     $('#btnAddVar').addEventListener('click', function () {
+        const ctx = settingsEnvCtx();
+        syncSettingsEnvFromDOM();
+        envVars = envRecover(ctx, envVars);
         envVars.push({ k: '', v: '' });
-        renderEnvVars();
-        markDirty();
-        const ks = $$('[data-var-k]');
+        envDraftWrite(ctx, envVars);
+
+        const w = $('#envList');
+        const i = envVars.length - 1;
+        if (!w.querySelector('[data-var-k]')) w.innerHTML = '';
+        w.insertAdjacentHTML('beforeend', settingsEnvRowHtml(envVars[i], i));
+
+        const ks = $$('[data-var-k]', w);
         if (ks.length) ks[ks.length - 1].focus();
+        markDirty();
     });
     $('#envList').addEventListener('click', function (e) {
         const b = e.target.closest('[data-var-del]');
         if (!b) return;
+        const ctx = settingsEnvCtx();
+        syncSettingsEnvFromDOM();
+        envVars = envRecover(ctx, envVars);
         const key = envVars[Number(b.dataset.varDel)] && envVars[Number(b.dataset.varDel)].k;
         if (currentAppId && key) {
             deleteEnvVar(currentAppId, key);
         } else {
             envVars.splice(Number(b.dataset.varDel), 1);
+            envDraftWrite(ctx, envVars);          // hapus juga dari storage
             renderEnvVars();
             markDirty();
         }
@@ -2684,6 +2909,11 @@ function init() {
         const t = e.target;
         if (t.dataset.varK != null) envVars[Number(t.dataset.varK)].k = t.value;
         else if (t.dataset.varV != null) envVars[Number(t.dataset.varV)].v = t.value;
+        envDraftWrite(settingsEnvCtx(), envVars);
+    });
+    $('#envList').addEventListener('focusout', function () {
+        syncSettingsEnvFromDOM();
+        envDraftWrite(settingsEnvCtx(), envVars);
     });
     $('#btnReveal').addEventListener('click', toggleSecret);
     $('#btnCopySecret').addEventListener('click', function () {

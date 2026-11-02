@@ -70,12 +70,18 @@ func (h *WebhookHandler) handlePush(w http.ResponseWriter, r *http.Request, body
 	}
 	branch := strings.TrimPrefix(ev.Ref, "refs/heads/")
 
+	// TAMBAHKAN LOG INI:
+	log.Printf("[webhook] Menerima push untuk repo: %s di branch: %s", ev.Repo.FullName, branch)
+
 	apps, err := h.repo.FindByGitHubRepo(r.Context(), ev.Repo.FullName)
 	if err != nil {
 		log.Printf("[webhook] cari app: %v", err)
 		writeError(w, http.StatusInternalServerError, "gagal mencari app")
 		return
 	}
+
+	// TAMBAHKAN LOG INI:
+	log.Printf("[webhook] Ditemukan %d app yang terhubung dengan repo ini", len(apps))
 
 	msg := ""
 	if ev.HeadCommit != nil {
@@ -88,8 +94,13 @@ func (h *WebhookHandler) handlePush(w http.ResponseWriter, r *http.Request, body
 	triggered := 0
 	for i := range apps {
 		app := &apps[i]
-		// Hanya auto-deploy untuk GitHub/Git source ketika push terjadi pada branch yang dikonfigurasi (default: main)
+
+		// TAMBAHKAN LOG INI:
+		log.Printf("[webhook] Cek app: %s | SourceType: %s | Branch DB: %s", app.Slug, app.SourceType, app.Branch)
+
 		if (app.SourceType != string(constants.SourceGitHub) && app.SourceType != string(constants.SourceGit)) || app.Branch != branch {
+			// TAMBAHKAN LOG INI:
+			log.Printf("[webhook] Skip app %s karena branch/source tidak cocok", app.Slug)
 			continue
 		}
 		if _, err := h.apps.Deploy(r.Context(), app, service.DeployOptions{
