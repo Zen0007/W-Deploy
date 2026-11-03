@@ -1447,51 +1447,150 @@ async function deleteEnvVar(appId, key) {
 }
 
 // ─── WebSocket log stream (/api/ws/apps/{id}) ────────────────────────────────
+// ─── VS Code Terminal Panel Logic ───────────────────────────────────────────
 
 let currentLogWs = null;
 
+function openTerminal(appId) {
+    const c = CONTAINERS.find(function (x) { return String(x.id) === String(appId); });
+    if (!c) return;
+
+    const panel = $('#logDrawer');
+    const body = $('#logDrawerBody');
+    if (!panel || !body) return; // Guard clause
+
+    // Tampilkan drawer
+    panel.classList.remove('translate-y-full');
+
+    // Update judul dan bersihkan terminal
+    if ($('#logDrawerTitle')) $('#logDrawerTitle').textContent = c.service + ' · ' + c.id;
+    body.innerHTML = '';
+
+    // Buat prompt ala VS Code
+    const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const branch = c.defaultBranch || 'main';
+
+    const promptHtml = `
+      <div class="term-log-line mb-2 flex flex-wrap gap-2 text-[13px] font-mono">
+        <span class="text-[#15bc37] font-bold shrink-0">➜</span> 
+        <span class="text-[#3794ff]">~/apps/${c.slug}</span> 
+        <span class="text-zinc-400">on</span> 
+        <span class="text-[#f0a92b] flex items-center gap-1">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+          ${branch}
+        </span> 
+        <span class="text-zinc-500">at ${now}</span>
+      </div>
+    `;
+    body.innerHTML = promptHtml;
+
+    // Connect WebSocket
+    openLogStream(appId);
+}
+
 function openLogStream(appId) {
     if (currentLogWs) { try { currentLogWs.close(); } catch (_) { } currentLogWs = null; }
-    const ws = new WebSocket(wsURL('/api/ws/apps/' + appId));   // ← path relatif
+    const ws = new WebSocket(wsURL('/api/ws/apps/' + appId));
     currentLogWs = ws;
 
-    const logBody = $('#logsBody');
-    logBody.textContent = 'Connecting to log stream…\n';
+    const logBody = $('#logDrawerBody');
+    if (!logBody) return; // Guard clause
+
+    logBody.insertAdjacentHTML('beforeend', '<div class="term-log-line text-zinc-500 italic mb-1">Connecting to log stream...</div>');
 
     ws.onopen = function () {
-        logBody.textContent = '── Stream connected ──\n';
+        logBody.insertAdjacentHTML('beforeend', '<div class="term-log-line text-emerald-500 mb-1">── Stream connected ──</div>');
+        logBody.scrollTop = logBody.scrollHeight;
     };
+
     ws.onmessage = function (ev) {
         let line = ev.data;
+        let colorClass = '';
+
         try {
             const msg = JSON.parse(ev.data);
             if (msg.type === 'log' && msg.line !== undefined) {
                 line = msg.line;
             } else if (msg.type === 'status') {
                 line = '── Status: ' + msg.status + ' ──';
-            } else if (msg.type === 'config_resolved') {
-                line = '── Config: type=' + (msg.project_type || '?') +
-                    ' (source=' + (msg.config_source || '?') + ') ──';
+                colorClass = 'text-amber-400';
             } else if (msg.type === 'done') {
                 line = '── Deployment live: ' + (msg.url || '') + ' ──';
+                colorClass = 'text-emerald-400';
             } else if (msg.type === 'error') {
                 line = '── Error: ' + (msg.error || '') + ' ──';
+                colorClass = 'text-red-400';
             }
         } catch (_) { }
-        logBody.textContent += line + '\n';
-        logBody.scrollTop = logBody.scrollHeight;
+
+        const isScrolledToBottom = logBody.scrollHeight - logBody.clientHeight <= logBody.scrollTop + 50;
+
+        const safeLine = esc(line);
+        logBody.insertAdjacentHTML('beforeend', `<div class="term-log-line ${colorClass}">${safeLine}</div>`);
+
+        if (isScrolledToBottom) {
+            logBody.scrollTop = logBody.scrollHeight;
+        }
     };
+
     ws.onerror = function () {
-        logBody.textContent += '\n[WebSocket error – connection lost]';
+        logBody.insertAdjacentHTML('beforeend', '<div class="term-log-line text-red-400">[WebSocket error – connection lost]</div>');
     };
+
     ws.onclose = function () {
-        logBody.textContent += '\n── Stream closed ──';
+        logBody.insertAdjacentHTML('beforeend', '<div class="term-log-line text-zinc-500 italic mt-2">── Stream closed ──</div>');
     };
 }
 
 function closeLogStream() {
     if (currentLogWs) { try { currentLogWs.close(); } catch (_) { } currentLogWs = null; }
 }
+
+function initTerminalResize() {
+    const panel = $('#logDrawer');
+    const handle = $('#logResizer');
+    if (!panel || !handle) return; // Mencegah error jika elemen tidak ada
+
+    let isResizing = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    handle.addEventListener('mousedown', function (e) {
+        isResizing = true;
+        startY = e.clientY;
+        startHeight = parseInt(document.defaultView.getComputedStyle(panel).height, 10);
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+        if (!isResizing) return;
+        const dy = startY - e.clientY;
+        const newHeight = startHeight + dy;
+        if (newHeight > 150 && newHeight < window.innerHeight * 0.9) {
+            panel.style.height = newHeight + 'px';
+        }
+    });
+
+    document.addEventListener('mouseup', function () {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+
+    // Binding tombol tutup
+    const btnClose = $('#btnCloseLogDrawer');
+    if (btnClose) {
+        btnClose.addEventListener('click', function () {
+            panel.classList.add('translate-y-full');
+            closeLogStream();
+        });
+    }
+}
+
 // ─── Container stats WebSocket ──────────────────────────────────────
 let _containersStatsWs = null;
 
@@ -1663,10 +1762,8 @@ function containerAction(act, id) {
     const c = CONTAINERS.find(function (x) { return String(x.id) === String(id); });
     if (!c) return;
     if (act === 'logs') {
-        $('#logsSub').textContent = c.id + ' · ' + c.image;
-        $('#logsBody').textContent = 'Connecting…';
-        openModal('modalLogs');
-        openLogStream(id);
+        // Instead of opening modal, open the terminal panel
+        openTerminal(id);
         return;
     }
     if (act === 'redeploy') {
@@ -2844,16 +2941,12 @@ function init() {
         $('#btnOAuthGo').disabled = !$$('#oauthScopes input:checked').length;
     });
 
-    // Logs modal — close WebSocket when modal is dismissed
-    function closeLogs() { closeLogStream(); closeModal('modalLogs'); }
     // Tombol Logout
     $('#btnLogout').addEventListener('click', function () {
         if (confirm('Are you sure you want to log out?')) {
             logoutUser();
         }
     });
-    $('#btnLogsX').addEventListener('click', closeLogs);
-    $('#btnLogsClose').addEventListener('click', closeLogs);
 
     // Repository search + filter
     $('#repoSearch').addEventListener('input', renderRepoList);
@@ -2929,7 +3022,7 @@ function init() {
         if (e.key !== 'Escape') return;
         if (modalStack.length) {
             const top = modalStack[modalStack.length - 1];
-            if (top === 'modalLogs') closeLogStream();
+            // if (top === 'modalLogs') closeLogStream(); // ❌ REMOVE THIS
             closeModal(top);
         } else if (drawerOpen) closeDrawer();
     });
@@ -2949,6 +3042,8 @@ function init() {
 
     // Monitoring intervals (5s without motion, 2s otherwise)
     setInterval(tickLabels, 1000);
+
+    initTerminalResize();
 
     // ── Bootstrap ────────────────────────────────────────────────────────
     // hapus 2 baris sebelum bootstrap
@@ -3043,6 +3138,5 @@ function showLoginPrompt() {
 
     document.body.appendChild(overlay);
 }
-
 
 init();
