@@ -92,7 +92,8 @@ function onRefreshed(token) {
     refreshSubscribers = [];
 }
 
-const API_BASE = 'https://api.wdeploy.my.id';
+// Pakai origin request. Kalau ada domain, ikut domain. Kalau IP, ikut IP.
+const API_BASE = window.location.origin;
 /** Centralised fetch with session authentication and JSON parsing. */
 async function apiFetch(url, opts) {
     const fullURL = url.startsWith('http') ? url : API_BASE + url;
