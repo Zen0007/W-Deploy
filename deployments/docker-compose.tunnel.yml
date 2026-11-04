@@ -1,0 +1,24 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+    networks: [ proxy-net ]
+    # no published ports — cloudflared reaches traefik:80 inside the network
+
+  backend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-net"
+      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || HostRegexp(`^[a-z0-9-]+\\.${MAIN_DOMAIN}$$`)"
+      - "traefik.http.routers.paas-web.entrypoints=web"
+      - "traefik.http.services.paas-web.loadbalancer.server.port=8080"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.0 # PIN — do not use :latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN required}
+    depends_on: [ traefik ]
+    networks: [ proxy-net ]

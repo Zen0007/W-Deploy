@@ -15,27 +15,42 @@ import (
 //
 // Subdomain platform (*.domain) TIDAK perlu panggilan API: rute wildcard
 // Master Tunnel meneruskan semuanya ke Traefik lokal.
+// TunnelService — same struct, but allow a disabled instance.
 type TunnelService struct {
 	cfClient   *cloudflare.Client
 	accountID  string
 	zoneID     string
 	mainDomain string
+	disabled   bool
 }
 
 // NewTunnelService membuat instance TunnelService
 func NewTunnelService(apiToken, accountID, zoneID, mainDomain string) (*TunnelService, error) {
-	api := cloudflare.NewClient(option.WithAPIToken(apiToken))
+	if apiToken == "" {
+		return &TunnelService{disabled: true, mainDomain: mainDomain}, nil
+	}
+	if accountID == "" || zoneID == "" {
+		return nil, fmt.Errorf("CLOUDFLARE_ACCOUNT_ID dan CLOUDFLARE_ZONE_ID wajib diisi")
+	}
 	return &TunnelService{
-		cfClient:   api,
+		cfClient:   cloudflare.NewClient(option.WithAPIToken(apiToken)),
 		accountID:  accountID,
 		zoneID:     zoneID,
 		mainDomain: mainDomain,
 	}, nil
 }
 
+func (s *TunnelService) Enabled() bool { return !s.disabled }
+
 // CreateCNAMERecord mendaftarkan DNS CNAME: hostname → <MASTER_TUNNEL_ID>.cfargotunnel.com
 // tunnelID adalah UUID Master Tunnel (CLOUDFLARE_TUNNEL_ID).
 func (s *TunnelService) CreateCNAMERecord(ctx context.Context, hostname, tunnelID string) (*dns.RecordResponse, error) {
+	if s.disabled {
+		log.Printf("[cloudflare] DNS auto-provisioning disabled; create %s → %s.cfargotunnel.com manually",
+			hostname, tunnelID)
+		return nil, nil // callers must tolerate nil
+	}
+
 	target := fmt.Sprintf("%s.cfargotunnel.com", tunnelID)
 	log.Printf("[cloudflare] membuat CNAME %s → %s", hostname, target)
 

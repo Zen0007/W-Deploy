@@ -19,3 +19,11 @@ coverage.*
 .idea/
 .vscode/
 .DS_Store
+# secrets
+.env
+deployments/cloudflare/*.json
+deployments/traefik/acme.json
+
+# local data
+data/
+deployments/data/

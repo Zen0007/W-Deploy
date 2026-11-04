@@ -34,18 +34,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := util.RandomHex(16)
-	http.SetCookie(w, &http.Cookie{
-		Name:     stateCookie,
-		Value:    state,
-		Path:     "/api/auth",
-		MaxAge:   600,
-		Domain:   ".wdeploy.my.id", // ← leading dot = semua subdomain
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setCookie(w, stateCookie, state, "/api/auth", 600)
 	http.Redirect(w, r, h.gh.AuthURL(h.cfg.GitHubRedirectURL, state), http.StatusFound)
 }
+
+
 
 // Refresh: GET /api/auth/refresh — perpanjang session (pakai refresh token).
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
@@ -67,17 +60,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set ulang cookie Access Token (wajib pakai Domain yang sama)
-	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.SessionCookie,
-		Value:    newAccessToken,
-		Path:     "/",
-		Domain:   ".wdeploy.my.id",
-		MaxAge:   int(h.cfg.SessionTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Set ulang cookie Access Token
+	h.setCookie(w, middleware.SessionCookie, newAccessToken, "/", int(h.cfg.SessionTTL.Seconds()))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -149,28 +133,10 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Set Cookie Access Token
-	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.SessionCookie,
-		Value:    accessToken,
-		Path:     "/",
-		Domain:   ".wdeploy.my.id", // ← Wajib sama dengan Login
-		MaxAge:   int(h.cfg.SessionTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setCookie(w, middleware.SessionCookie, accessToken, "/", int(h.cfg.SessionTTL.Seconds()))
 
 	// 4. Set Refresh Token Cookie (paas_refresh)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "paas_refresh",
-		Value:    refreshToken,
-		Path:     "/api/auth",      // Hanya dikirim ke endpoint refresh
-		Domain:   ".wdeploy.my.id", // ← Wajib sama dengan Login
-		MaxAge:   int(h.cfg.RefreshTokenTTL.Seconds()),
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setCookie(w, "paas_refresh", refreshToken, "/api/auth", int(h.cfg.RefreshTokenTTL.Seconds()))
 
 	// Redirect ke frontend...
 	h.redirectFront(w, r, "token", accessToken)
@@ -234,28 +200,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Hapus Access Token (paas_session)
-	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.SessionCookie, // "paas_session"
-		Value:    "",
-		Path:     "/",
-		Domain:   ".wdeploy.my.id", // Wajib sama dengan saat di-set
-		MaxAge:   -1,               // Instruksi untuk menghapus cookie
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setCookie(w, middleware.SessionCookie, "", "/", -1)
 
 	// 3. Hapus Refresh Token (paas_refresh)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "paas_refresh",
-		Value:    "",
-		Path:     "/api/auth",      // Wajib sama dengan Path saat di-set
-		Domain:   ".wdeploy.my.id", // Wajib sama dengan saat di-set
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.cfg.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-	})
+	h.setCookie(w, "paas_refresh", "", "/api/auth", -1)
 
 	// 4. Kirim respons sukses
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
@@ -264,4 +212,16 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) redirectFront(w http.ResponseWriter, r *http.Request, key, val string) {
 	front := h.cfg.FrontendURL + "/#" + key + "=" + url.QueryEscape(val)
 	http.Redirect(w, r, front, http.StatusFound)
+}
+func (h *AuthHandler) setCookie(w http.ResponseWriter, name, value, path string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     path,
+		Domain:   h.cfg.CookieDomain, // "" → omitted
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   h.cfg.CookieSecure, // was cfg.IsProduction()
+		SameSite: http.SameSiteLaxMode,
+	})
 }

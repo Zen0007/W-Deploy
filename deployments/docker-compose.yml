@@ -1,48 +1,35 @@
-# Jalankan dari root repo:
-#   docker compose -f deployments/docker-compose.yml --env-file .env up -d --build
+name: w-deploy
+
 services:
-  paas-backend:
+  backend:
     build:
       context: ..
       dockerfile: deployments/Dockerfile
-    container_name: paas-backend
     restart: unless-stopped
     env_file: ../.env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       PORT: "8080"
       DB_HOST: postgres
       DB_PORT: "5432"
       WORKSPACE_PATH: /var/lib/paas/workspace
       DOCKER_HOST: unix:///var/run/docker.sock
-      HOST_PROC: /host/proc
-      HOST_ROOT: /host/root
-      LOCAL_SOURCE_ROOT: /mnt/local-sources
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../data/workspace:/var/lib/paas/workspace
-      - /proc:/host/proc:ro
-      - /:/host/root:ro
-      - /srv/apps:/srv/apps:ro
-      - ${LOCAL_SOURCES_HOST_PATH:-./data/local-sources}:/mnt/local-sources:ro
     depends_on:
       postgres:
         condition: service_healthy
     networks: [ proxy-net ]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=proxy-net"
-      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || Host(`api.${MAIN_DOMAIN}`) || HostRegexp(`${MAIN_DOMAIN_REGEX}`)"
-      - "traefik.http.routers.paas-web.entrypoints=web"
-      - "traefik.http.services.paas-web.loadbalancer.server.port=8080"
 
   postgres:
     image: postgres:17-alpine
-    container_name: paas-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-paas}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required — run: make setup}"
       POSTGRES_DB: ${DB_NAME:-paas_db}
     volumes:
       - paas-pg-data:/var/lib/postgresql/data
@@ -53,37 +40,8 @@ services:
       retries: 10
     networks: [ proxy-net ]
 
-  traefik:
-    image: traefik:v3.6
-    container_name: paas-traefik
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      CF_DNS_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - traefik-acme:/acme
-    networks: [ proxy-net ]
-
-  # Cloudflare Tunnel: di dashboard Zero Trust, arahkan Public Hostname
-  # `*.${MAIN_DOMAIN}` dan `api.${MAIN_DOMAIN}` ke service http://traefik:80
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: paas-cloudflared
-    restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml run
-    volumes:
-      - ./cloudflare/config.yml:/etc/cloudflared/config.yml:ro,z
-      - ./cloudflare/b39ca42f-5072-4747-8be4-a676dfe82143.json:/etc/cloudflared/credentials.json:ro,z
-    depends_on: [ traefik ]
-    networks: [ proxy-net ]
-
 volumes:
   paas-pg-data:
-  traefik-acme:
 
 networks:
   proxy-net:

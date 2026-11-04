@@ -1,52 +1,194 @@
 #!/usr/bin/env bash
-# Menyiapkan lingkungan: network Docker, direktori workspace, .env, dan CLI `pack`.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-echo "==> Memeriksa Docker..."
-command -v docker >/dev/null || { echo "Docker belum terpasang"; exit 1; }
-docker info >/dev/null 2>&1 || { echo "Docker daemon tidak berjalan / tidak ada izin akses"; exit 1; }
+ENV_FILE=".env"
+ENV_EXAMPLE=".env.example"
 
-echo "==> Membuat network proxy-net..."
-docker network inspect proxy-net >/dev/null 2>&1 \
-  || docker network create proxy-net --driver bridge --attachable
+err()  { echo "❌ $*" >&2; exit 1; }
+warn() { echo "⚠️  $*" >&2; }
+info() { echo "ℹ️  $*"; }
+ok()   { echo "✅ $*"; }
 
-echo "==> Membuat direktori workspace..."
-mkdir -p data/workspace/{repos,artifacts,logs,uploads}
+# --- preflight ---
+command -v docker  >/dev/null || err "docker not installed"
+docker compose version >/dev/null 2>&1 || err "docker compose plugin not installed"
+command -v openssl >/dev/null || err "openssl not installed"
+command -v curl    >/dev/null || warn "curl not installed — public IP auto-detection will be skipped"
 
-echo "==> Menyiapkan .env..."
-if [ ! -f .env ]; then
-  cp .env.example .env
-  # Isi secret acak agar tidak memakai default
-  sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
-  sed -i "s|^GITHUB_WEBHOOK_SECRET=.*|GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32)|" .env
-  sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$(openssl rand -hex 16)|" .env
-  echo "    .env dibuat. Lengkapi CLOUDFLARE_*, GITHUB_CLIENT_ID/SECRET, MAIN_DOMAIN."
-else
-  echo "    .env sudah ada, dilewati."
+# --- bootstrap .env ---
+if [ ! -f "$ENV_FILE" ]; then
+  [ -f "$ENV_EXAMPLE" ] || err "$ENV_EXAMPLE missing"
+  cp "$ENV_EXAMPLE" "$ENV_FILE"
+  ok ".env created from $ENV_EXAMPLE"
 fi
 
-echo "==> Memasang pack CLI (Cloud Native Buildpacks)..."
-if command -v pack >/dev/null; then
-  echo "    pack sudah ada: $(pack --version)"
-else
-  ARCH=$(uname -m); case "$ARCH" in x86_64) P=linux ;; aarch64|arm64) P=linux-arm64 ;; *) echo "arsitektur $ARCH tidak didukung"; exit 1 ;; esac
-  VER=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/buildpacks/pack/releases/latest | sed 's|.*/||')
-  TMP=$(mktemp -d)
-  curl -fsSL "https://github.com/buildpacks/pack/releases/download/${VER}/pack-${VER}-${P}.tgz" -o "$TMP/pack.tgz"
-  tar -xzf "$TMP/pack.tgz" -C "$TMP"
-  sudo install -m 0755 "$TMP/pack" /usr/local/bin/pack
-  rm -rf "$TMP"
-  echo "    pack terpasang: $(pack --version)"
+# --- safe .env helpers (no sed, safe for any value) ---
+get_env() {
+  awk -v k="$1" 'index($0, k"=") == 1 { sub(/^[^=]*=/, ""); print; exit }' "$ENV_FILE"
+}
+
+set_env() {
+  local key="$1" val="$2" tmp
+  tmp="$(mktemp)"
+  KEY="$key" VAL="$val" awk '
+    BEGIN { k=ENVIRON["KEY"]; v=ENVIRON["VAL"]; done=0 }
+    index($0, k"=") == 1 { print k"="v; done=1; next }
+    { print }
+    END { if (!done) print k"="v }
+  ' "$ENV_FILE" > "$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+ensure_secret() {
+  local key="$1" len="${2:-32}" cur
+  cur="$(get_env "$key")"
+  if [ -z "$cur" ] || [ "$cur" = "change-me" ]; then
+    set_env "$key" "$(openssl rand -hex "$len")"
+    info "generated $key"
+  fi
+}
+
+require_nonempty() {
+  local key="$1"
+  [ -n "$(get_env "$key")" ] || err "$key is required (set it in .env before re-running)"
+}
+
+detect_public_ip() {
+  command -v curl >/dev/null || return 1
+  local url ip
+  for url in https://api.ipify.org https://ifconfig.me/ip https://icanhazip.com; do
+    ip="$(curl -sf --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "$ip" in
+      ""|*[!0-9.]*) continue ;;
+    esac
+    echo "$ip"
+    return 0
+  done
+  return 1
+}
+
+# --- mode: env var wins, then .env, then local ---
+MODE="${INGRESS_MODE:-$(get_env INGRESS_MODE)}"
+MODE="${MODE:-local}"
+set_env INGRESS_MODE "$MODE"
+
+# --- auth mode ---
+AUTH="$(get_env AUTH_METHOD)"; AUTH="${AUTH:-local}"
+set_env AUTH_METHOD "$AUTH"
+
+# --- idempotent secrets ---
+ensure_secret JWT_SECRET 32
+ensure_secret DB_PASSWORD 16
+ensure_secret GITHUB_WEBHOOK_SECRET 16
+
+# --- auth: bootstrap admin for local / both ---
+case "$AUTH" in
+  local|both)
+    [ -n "$(get_env BOOTSTRAP_ADMIN_EMAIL)" ] \
+      || err "BOOTSTRAP_ADMIN_EMAIL is required for AUTH_METHOD=$AUTH"
+    if [ -z "$(get_env BOOTSTRAP_ADMIN_PASSWORD)" ]; then
+      set_env BOOTSTRAP_ADMIN_PASSWORD \
+        "$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)"
+      info "generated BOOTSTRAP_ADMIN_PASSWORD"
+    fi
+    ;;
+esac
+
+# --- auth: GitHub OAuth (interactive) ---
+if [ "$AUTH" = "github" ] || [ "$AUTH" = "both" ]; then
+  if [ -z "$(get_env GITHUB_CLIENT_ID)" ] && [ -t 0 ]; then
+    echo ""
+    echo "━━━ GitHub OAuth ━━━"
+    echo "Create app: https://github.com/settings/applications/new"
+    echo "Callback URL: $(get_env APP_URL)/api/auth/github/callback"
+    read -r  -p "Client ID     : " cid
+    read -rs -p "Client Secret : " csec; echo ""
+    set_env GITHUB_CLIENT_ID "$cid"
+    set_env GITHUB_CLIENT_SECRET "$csec"
+  fi
+  require_nonempty GITHUB_CLIENT_ID
+  require_nonempty GITHUB_CLIENT_SECRET
 fi
 
-echo "==> Pre-pull builder image..."
-docker pull paketobuildpacks/builder-jammy-base:latest >/dev/null
+# --- ingress: per-mode wiring ---
+case "$MODE" in
+  local)
+    set_env BIND_ADDR   "127.0.0.1"
+    set_env HTTP_PORT   "${HTTP_PORT:-8000}"
+    [ -n "$(get_env MAIN_DOMAIN)" ] || set_env MAIN_DOMAIN "localhost"
+    set_env APP_URL     "http://localhost:8080"
+    ;;
 
-cat <<MSG
+  direct)
+    set_env BIND_ADDR   "0.0.0.0"
+    set_env HTTP_PORT   "80"                    # ACME HTTP-01 must use port 80
+    [ -n "$(get_env HTTPS_PORT)" ] || set_env HTTPS_PORT "443"
 
-Selesai. Langkah berikutnya:
-  1. Edit .env  (MAIN_DOMAIN, CLOUDFLARE_*, GITHUB_CLIENT_ID/SECRET)
-  2. Jalankan stack lengkap :  docker compose -f deployments/docker-compose.yml --env-file .env up -d --build
-     atau backend saja (dev):  go run ./cmd/server
-MSG
+    # Auto-fill MAIN_DOMAIN from public IP via sslip.io if unset/localhost
+    CUR_DOMAIN="$(get_env MAIN_DOMAIN)"
+    if [ -z "$CUR_DOMAIN" ] || [ "$CUR_DOMAIN" = "localhost" ]; then
+      info "detecting public IP for sslip.io domain…"
+      if PUBIP="$(detect_public_ip)"; then
+        set_env MAIN_DOMAIN "${PUBIP}.sslip.io"
+        ok "MAIN_DOMAIN=${PUBIP}.sslip.io (via sslip.io)"
+      else
+        err "could not detect public IP. Set MAIN_DOMAIN manually in .env:
+     MAIN_DOMAIN=203.0.113.42.sslip.io   ← any subdomain resolves to the IP
+     MAIN_DOMAIN=yourdomain.com          ← if you own a real domain"
+      fi
+    fi
+
+    set_env APP_URL "https://$(get_env MAIN_DOMAIN)"
+
+    # Default ACME_EMAIL from the domain — LE only validates syntax
+    if [ -z "$(get_env ACME_EMAIL)" ]; then
+      set_env ACME_EMAIL "admin@$(get_env MAIN_DOMAIN)"
+      info "ACME_EMAIL defaulted to $(get_env ACME_EMAIL)"
+    fi
+    ;;
+
+  tunnel)
+    require_nonempty MAIN_DOMAIN
+    require_nonempty CLOUDFLARE_TUNNEL_TOKEN
+    set_env BIND_ADDR "127.0.0.1"
+    [ -n "$(get_env HTTP_PORT)" ] || set_env HTTP_PORT "8000"
+    set_env APP_URL   "https://$(get_env MAIN_DOMAIN)"
+    ;;
+
+  *) err "unknown INGRESS_MODE=$MODE (expected local|direct|tunnel)" ;;
+esac
+
+# --- lock down & validate ---
+chmod 600 "$ENV_FILE"
+
+info "validating docker compose config (mode=$MODE)…"
+docker compose \
+  -f deployments/docker-compose.yml \
+  -f "deployments/docker-compose.$MODE.yml" \
+  config >/dev/null || err "compose validation failed"
+
+ok "setup complete (mode=$MODE, auth=$AUTH)"
+
+# --- summary ---
+echo ""
+echo "    Platform URL : $(get_env APP_URL)"
+case "$MODE" in
+  direct|tunnel)
+    echo "    App URLs     : https://<slug>.$(get_env MAIN_DOMAIN)"
+    ;;
+esac
+case "$AUTH" in
+  local|both)
+    echo "    Admin email  : $(get_env BOOTSTRAP_ADMIN_EMAIL)"
+    echo "    Admin pass   : $(get_env BOOTSTRAP_ADMIN_PASSWORD)"
+    ;;
+esac
+case "$MODE" in
+  direct)
+    echo ""
+    echo "    Make sure ports 80 and 443 are open from the internet:"
+    echo "      curl -I $(get_env APP_URL)"
+    ;;
+esac
+echo ""
+echo "    Next: make up MODE=$MODE"

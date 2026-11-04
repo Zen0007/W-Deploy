@@ -1,0 +1,9 @@
+services:
+  backend:
+    volumes:
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
+      - /srv/apps:/srv/apps:ro
+    environment:
+      HOST_PROC: /host/proc
+      HOST_ROOT: /host/root

@@ -1,0 +1,52 @@
+# deployments/docker-compose.direct.yml
+#
+# Ingress mode: direct
+#   - TLS terminated by Traefik via Let's Encrypt HTTP-01
+#   - No wildcard cert (HTTP-01 doesn't support it) — Traefik requests
+#     a per-hostname cert on first request
+#   - Works out of the box with sslip.io: MAIN_DOMAIN=<ip>.sslip.io
+#     Any subdomain of <ip>.sslip.io already resolves to <ip>
+#   - Requires: ports 80 and 443 open to the internet
+#   - ACME_EMAIL must be set (setup.sh fills it when empty)
+
+services:
+  traefik:
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - "--ping=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL:?ACME_EMAIL required — run: make setup}"
+      - "--certificatesresolvers.le.acme.storage=/acme/acme.json"
+      # HTTP-01 only — sslip.io does not permit DNS-01 delegation,
+      # and wildcard certs are not needed because each app subdomain
+      # is issued its own certificate automatically on first request.
+    healthcheck:
+      test: [ "CMD", "traefik", "healthcheck" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - traefik-acme:/acme
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${BIND_ADDR:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    networks: [ proxy-net ]
+
+  backend:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-net"
+      - "traefik.http.routers.paas-web.rule=Host(`${MAIN_DOMAIN}`) || HostRegexp(`^[a-z0-9-]+\\.${MAIN_DOMAIN}$$`)"
+      - "traefik.http.routers.paas-web.entrypoints=websecure"
+      - "traefik.http.routers.paas-web.tls.certresolver=le"
+      - "traefik.http.services.paas-web.loadbalancer.server.port=8080"
+
+volumes:
+  traefik-acme:

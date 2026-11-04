@@ -4,3 +4,6 @@ data/
 tests/
 *.md
 !README.md
+deployments/cloudflare
+deployments/traefik/acme.json
+**/*.zip

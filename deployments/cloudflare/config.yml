@@ -1,11 +1,12 @@
-tunnel: b39ca42f-5072-4747-8be4-a676dfe82143
+# deployments/cloudflare/config.yml.example
+tunnel: ${CLOUDFLARE_TUNNEL_ID}
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
-  - hostname: "wdeploy.my.id"
+  - hostname: "${MAIN_DOMAIN}"
     service: http://traefik:80
-  - hostname: "api.wdeploy.my.id"
+  - hostname: "api.${MAIN_DOMAIN}"
     service: http://traefik:80
-  - hostname: "*.wdeploy.my.id"
+  - hostname: "*.${MAIN_DOMAIN}"
     service: http://traefik:80
   - service: http_status:404

@@ -20,6 +20,7 @@ import (
 	"W-dev/internal/service"
 	"W-dev/internal/websocket"
 	"W-dev/internal/worker"
+	cf "W-dev/pkg/cloudflared"
 	"W-dev/pkg/docker"
 )
 
@@ -65,8 +66,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if _, err := dockerCli.EnsureNetwork(ctx, constants.DockerNetworkName); err != nil {
-		log.Fatalf("network: %v", err)
+	if _, err := dockerCli.EnsureNetwork(ctx, cfg.DockerNetworkName); err != nil {
+		log.Fatalf("network %s: %v", cfg.DockerNetworkName, err)
 	}
 
 	// 5. Repository
@@ -77,10 +78,23 @@ func main() {
 	tokenRepo := repository.NewUserTokenRepository(db)
 
 	// 6. Service
-	ghSvc := service.NewGitHubService(cfg.GitHubClientID, cfg.GitHubClientSecret,
-		cfg.GitHubWebhookSecret, cfg.GitHubWebhookBaseURL)
-	if !ghSvc.Configured() {
-		log.Println("[peringatan] GitHub OAuth belum dikonfigurasi (GITHUB_CLIENT_ID/SECRET)")
+	var ghSvc *service.GitHubService
+	if cfg.GitHubEnabled() {
+		ghSvc = service.NewGitHubService(cfg.GitHubClientID, cfg.GitHubClientSecret,
+			cfg.GitHubWebhookSecret, cfg.GitHubWebhookBaseURL)
+		if !ghSvc.Configured() {
+			log.Fatalf("AUTH_METHOD=%s but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not configured", cfg.AuthMethod)
+		}
+	}
+
+	// Cloudflare DNS (optional)
+	cfTunnelSvc, err := cf.NewTunnelService(
+		cfg.CloudflareAPIToken, cfg.CloudflareAccountID, cfg.CloudflareZoneID, cfg.MainDomain)
+	if err != nil {
+		log.Fatalf("cloudflare: %v", err)
+	}
+	if !cfTunnelSvc.Enabled() {
+		log.Println("[cloudflare] DNS auto-provisioning disabled (set DNS_PROVIDER=cloudflare to enable)")
 	}
 
 	tokenSvc := service.NewTokenService(tokenRepo, cfg.JWTSecret)
@@ -93,7 +107,6 @@ func main() {
 	cleanupSvc := service.NewCleanupService(containerSvc, dbSvc, buildSvc, ghSvc, tokenSvc, appRepo, appDBRepo, cfg.WorkspacePath)
 
 	// 7. WebSocket hub, queue, worker
-	// 7. WebSocket hub, queue, worker
 	hub := websocket.NewHub()
 	queue := worker.NewQueue(cfg.QueueSize)
 
@@ -105,7 +118,6 @@ func main() {
 	go resourceSvc.Starts(ctx)
 	go statsBroadcaster.Start(ctx)
 
-	
 	dw := worker.NewDeployWorker(worker.Deps{
 		Queue: queue, Apps: appRepo, Deploys: deployRepo, Envs: envRepo, AppDBs: appDBRepo,
 		Git: gitSvc, Upload: uploadSvc, Build: buildSvc, Containers: containerSvc,
